@@ -386,6 +386,54 @@ class ModelAdviceRow:
     exact_model_output_raw: "str | None" = None
 
 
+_AGENT_DECISION_COLUMNS = (
+    "decision_id",
+    "decided_at",
+    "context_ts",
+    "action",
+    "confidence",
+    "setup_quality",
+    "strike",
+    "instrument_key",
+    "entry_price",
+    "stop_price",
+    "target_price",
+    "rationale",
+    "sources",
+    "analytics_snapshot",
+    "nifty_spot",
+    "boundary",
+)
+
+_AGENT_DECISION_TIMESTAMP_COLUMNS = ("decided_at", "context_ts")
+
+
+@dataclass(frozen=True)
+class AgentDecisionRow:
+    """A trade decision made entirely by the agent (no Python risk gating).
+
+    The agent reads raw + analytics context, optionally web-searches, and
+    records its own directional call and levels here. Shadow-only.
+    """
+
+    decision_id: str
+    decided_at: datetime
+    action: str
+    rationale: str
+    context_ts: "datetime | None" = None
+    confidence: "float | None" = None
+    setup_quality: "str | None" = None
+    strike: "float | None" = None
+    instrument_key: "str | None" = None
+    entry_price: "float | None" = None
+    stop_price: "float | None" = None
+    target_price: "float | None" = None
+    sources: "str | None" = None
+    analytics_snapshot: "str | None" = None
+    nifty_spot: "float | None" = None
+    boundary: str = "SHADOW ONLY - DO NOT EXECUTE"
+
+
 @dataclass(frozen=True)
 class TradeFeedbackRow:
     advice_id: str
@@ -517,6 +565,26 @@ _SCHEMA = (
     )
     """,
     _TRADE_FEEDBACK_DDL,
+    """
+    CREATE TABLE IF NOT EXISTS agent_decision (
+      decision_id VARCHAR PRIMARY KEY,
+      decided_at TIMESTAMPTZ NOT NULL,
+      context_ts TIMESTAMPTZ,
+      action VARCHAR NOT NULL CHECK (action IN ('LONG_CALL','LONG_PUT','NO_TRADE')),
+      confidence DOUBLE,
+      setup_quality VARCHAR,
+      strike DOUBLE,
+      instrument_key VARCHAR,
+      entry_price DOUBLE,
+      stop_price DOUBLE,
+      target_price DOUBLE,
+      rationale VARCHAR NOT NULL,
+      sources JSON,
+      analytics_snapshot JSON,
+      nifty_spot DOUBLE,
+      boundary VARCHAR
+    )
+    """,
 )
 
 
@@ -831,6 +899,43 @@ class DuckDBStore:
             self._convert_advice_row(names, record)
             for record in cursor.fetchall()
         ]
+
+    def insert_agent_decision(self, row: "AgentDecisionRow") -> None:
+        conn = self._connection()
+        columns = ", ".join(_AGENT_DECISION_COLUMNS)
+        placeholders = ", ".join("?" for _ in _AGENT_DECISION_COLUMNS)
+        values = [getattr(row, name) for name in _AGENT_DECISION_COLUMNS]
+        conn.execute(
+            f"INSERT INTO agent_decision ({columns}) VALUES ({placeholders})",
+            values,
+        )
+
+    def recent_agent_decisions(self, limit: int = 20):
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        conn = self._connection()
+        select = ", ".join(
+            f"epoch_ms({name}) AS {name}"
+            if name in _AGENT_DECISION_TIMESTAMP_COLUMNS
+            else name
+            for name in _AGENT_DECISION_COLUMNS
+        )
+        cursor = conn.execute(
+            f"SELECT {select} FROM agent_decision "
+            "ORDER BY decided_at DESC LIMIT ?",
+            [limit],
+        )
+        names = [column[0] for column in cursor.description]
+        out = []
+        for record in cursor.fetchall():
+            row = dict(zip(names, record))
+            for name in _AGENT_DECISION_TIMESTAMP_COLUMNS:
+                if row.get(name) is not None:
+                    row[name] = datetime.fromtimestamp(
+                        row[name] / 1000.0, tz=timezone.utc
+                    )
+            out.append(row)
+        return out
 
     def market_data_at(self, time: datetime):
         conn = self._connection()
