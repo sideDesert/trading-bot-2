@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+data/
+*.duckdb
+*.duckdb.wal
+
+# claude code local
+.claude/scheduled_tasks.lock
