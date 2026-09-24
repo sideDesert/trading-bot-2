@@ -129,6 +129,36 @@ class RecordTests(unittest.TestCase):
         self.assertEqual(recent[0]["action"], "NO_TRADE")
         self.assertIsNone(recent[0]["entry_price"])
 
+    def test_trade_queues_paper_order_with_market_context(self):
+        inbox = Path(self.tmp.name) / "paper-inbox"
+        args = self.parser.parse_args(
+            [
+                "record", "--action", "LONG_PUT", "--strike", "23300",
+                "--instrument-key", "NSE_FO|56994", "--entry-price", "88.4",
+                "--stop-price", "75.0", "--target-price", "115.0",
+                "--rationale", "Breakdown.",
+            ]
+        )
+        with DuckDBStore(self.db) as store:
+            store.upsert_market_data(_seed_row(lot_size=65))
+            result = do_record(store, args, NOW, inbox=inbox)
+        self.assertTrue(result["paper_order_queued"])
+        queued = json.loads((inbox / f"{result['decision_id']}.json").read_text())
+        self.assertEqual(queued["action"], "LONG_PUT")
+        self.assertEqual(queued["entry_price"], 88.4)
+        self.assertEqual(queued["lot_size"], 65)
+        self.assertEqual(queued["expiry_date"], "2026-09-22")
+        self.assertEqual(queued["india_vix"], 13.5)
+        self.assertEqual(datetime.fromisoformat(queued["decided_at"]), NOW)
+
+    def test_no_trade_does_not_queue_paper_order(self):
+        inbox = Path(self.tmp.name) / "paper-inbox"
+        args = self.parser.parse_args(["record", "--action", "NO_TRADE", "--rationale", "Chop."])
+        with DuckDBStore(self.db) as store:
+            result = do_record(store, args, NOW, inbox=inbox)
+        self.assertNotIn("paper_order_queued", result)
+        self.assertFalse(inbox.exists())
+
     def test_no_trade_with_prices_rejected(self):
         with self.assertRaises(AgentBrainError):
             self._record(

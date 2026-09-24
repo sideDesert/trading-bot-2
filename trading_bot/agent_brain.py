@@ -195,7 +195,31 @@ def _validate_decision(args) -> None:
         raise AgentBrainError("a trade requires --strike and --instrument-key")
 
 
-def do_record(store, args, now: datetime) -> dict:
+def queue_paper_order(inbox: Path, store, row: AgentDecisionRow) -> Path:
+    market = store.latest_market_data() or {}
+    expiry = market.get("expiry_date")
+    payload = {
+        "decision_id": row.decision_id,
+        "decided_at": row.decided_at.isoformat(),
+        "action": row.action,
+        "instrument_key": row.instrument_key,
+        "strike": row.strike,
+        "entry_price": row.entry_price,
+        "stop_price": row.stop_price,
+        "target_price": row.target_price,
+        "lot_size": market.get("lot_size"),
+        "expiry_date": str(expiry)[:10] if expiry is not None else None,
+        "india_vix": market.get("india_vix"),
+    }
+    inbox.mkdir(parents=True, exist_ok=True)
+    path = inbox / f"{row.decision_id}.json"
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def do_record(store, args, now: datetime, inbox: "Path | None" = None) -> dict:
     _validate_decision(args)
     if not args.rationale or not args.rationale.strip():
         raise AgentBrainError("rationale is required")
@@ -225,13 +249,17 @@ def do_record(store, args, now: datetime) -> dict:
         boundary=BOUNDARY,
     )
     store.insert_agent_decision(row)
-    return {
+    result = {
         "ok": True,
         "status": "RECORDED",
         "decision_id": decision_id,
         "action": args.action,
         "boundary": BOUNDARY,
     }
+    if inbox is not None and args.action != "NO_TRADE":
+        queue_paper_order(inbox, store, row)
+        result["paper_order_queued"] = True
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -291,7 +319,12 @@ def run(
                     store, fetch_status=fetch_status, recent_limit=args.recent_limit
                 )
             elif args.command == "record":
-                payload = do_record(store, args, datetime.now(IST))
+                payload = do_record(
+                    store,
+                    args,
+                    datetime.now(IST),
+                    inbox=args.db_path.parent / "paper-inbox",
+                )
             else:
                 payload = {
                     "ok": True,

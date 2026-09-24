@@ -107,6 +107,15 @@ NIFTY options intraday advisory bot: deterministic Python computes market featur
 - Offline strategy discovery may let an LLM propose falsifiable feature ideas, but only a fixed deterministic DSL/evaluator may execute them; data splits, costs, gates, and trial counts are immutable within a study.
 - Prompt optimization remains batch-based and human-approved. The EvolveTrade/self-evolving-prompt line is a research lead only; no agent may rewrite `system_v1.txt` from one trade or auto-apply a proposal.
 
+## Paper order engine and Zerodha Kite (added 24-Sep-2026)
+
+- `python -m trading_bot.paper run` simulates orders for agent-harness decisions. `agent_brain record` writes each LONG decision atomically to `data/paper-inbox/<decision_id>.json` (with lot size, expiry, and VIX from the latest market row); the engine moves processed files to `data/paper-inbox/processed/`. `paper status` shows today's book.
+- The engine keeps its own DuckDB file, `data/paper.duckdb` (table `paper_trade`, one row per decision, timestamps as IST ISO text), and opens it per operation. It never opens `data/trading_bot.duckdb`, because DuckDB allows only one read-write process and `agent_brain` holds that file during its Upstox fetch.
+- Fills: limit buy at the agent's `entry_price`, filled at the Upstox top-of-book ask when ask ≤ limit, cancelled after 10 minutes or at 15:15. Exits: stop at the bid when bid ≤ stop; target at the target price when bid ≥ target; square-off at the bid at 15:20. MAE/MFE are tracked from the bid at 5-second polls, not ticks.
+- Agent-harness paper risk (user-set 24-Sep-2026): ₹10,000 per trade, halved when India VIX > 16 or unknown; lots sized by the engine; ₹20,000 daily paper-loss stop; one pending/open position at a time. These apply to the `/nifty-agent-advice` path only; the `/nifty-advice` engine keeps its own rules above.
+- Kite Connect (`trading_bot/kite`) is used only for calculations: NFO instrument lookup (Upstox strike/expiry → Kite `tradingsymbol`, lot size cross-checked), `POST /margins/orders`, `GET /user/margins/equity`, and `POST /charges/orders` for exact round-trip charges. `KiteClient` enforces an endpoint allowlist and refuses `/orders` and `/gtt`. If Kite is unavailable, charges fall back to the local `CostConfig` model (flagged `LOCAL_MODEL`). Margin shortfall on the real account is noted (`REAL_ACCOUNT_WOULD_LACK_MARGIN`) but does not block a paper trade.
+- Kite auth: `KITE_API_KEY`/`KITE_API_SECRET` in `.env`; `python -m trading_bot.kite login` performs the daily OAuth login (redirect `http://127.0.0.1`; macOS denies port 80 to non-root, so paste the redirected URL) and writes `KITE_ACCESS_TOKEN` to `.env`. Tokens expire about 06:00 IST daily.
+
 ## DuckDB storage
 
 - `DATABASE.md` is the canonical schema. `trading_bot.storage` initializes exactly three tables in `data/trading_bot.duckdb`: `market_data`, `model_advice`, and `trade_feedback`. DuckDB/WAL and all `data/` runtime artifacts are gitignored. Dependency is pinned to `duckdb==1.4.1`.
@@ -134,7 +143,7 @@ NIFTY options intraday advisory bot: deterministic Python computes market featur
 ## Verification
 
 - Environment: `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt`.
-- Full offline gate: `.venv/bin/python -m unittest discover -s tests -v` (**326 tests**) and `.venv/bin/python -m compileall -q trading_bot tests`.
+- Full offline gate: `.venv/bin/python -m unittest discover -s tests -v` (**372 tests**) and `.venv/bin/python -m compileall -q trading_bot tests`.
 - CLI help gates: modules `trading_bot.upstox`, `trading_bot.collector`, `trading_bot.agent_tool`, `trading_bot.advisory`, `trading_bot.feedback`, and `trading_bot.prompt_analysis`.
 - Devin discovers `/nifty-advice` from `.devin/skills/nifty-advice` and `/trade-result` from `.devin/skills/trade-result`.
 - Bounded live Upstox and harness validation passed on 17-Sep-2026: concrete expiry `2026-09-22`, dynamic lot 65, nine-row chain window, historical baselines, features, tick-valid candidate levels, DuckDB write, immediate 2,708-byte snapshot, and `agent_tool prepare` without any model API key. The after-hours request correctly returned engine-owned `NO_TRADE` with the shadow boundary.

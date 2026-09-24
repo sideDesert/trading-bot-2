@@ -13,6 +13,15 @@ ends with `SHADOW ONLY - DO NOT EXECUTE`.
 
 ## Procedure
 
+0. Before deciding, check the paper book:
+
+   ```bash
+   .venv/bin/python -m trading_bot.paper status
+   ```
+
+   If a trade is `PENDING_ENTRY` or `OPEN`, do not add a new idea (the engine
+   will skip it). If the day's net is at or below -₹20,000, stop for the day.
+
 1. Gather the context brief (raw data + analytics + history):
 
    ```bash
@@ -72,7 +81,12 @@ ends with `SHADOW ONLY - DO NOT EXECUTE`.
      --rationale "<why there is no edge right now>"
    ```
 
-   On `RECORDED`, note the `decision_id`.
+   On `RECORDED`, note the `decision_id`. For a trade the response includes
+   `paper_order_queued: true`: the paper engine (`python -m trading_bot.paper run`,
+   started by the user in its own terminal) picks it up, places a simulated limit
+   buy at `entry_price` valid for 10 minutes, then exits at stop, target, or the
+   15:20 square-off using live bid/ask.
+
 
 ## User output
 
@@ -86,6 +100,7 @@ Option: NIFTY <strike> CALL
 Buy price: ₹<entry_price>
 Stop price: ₹<stop_price>
 Sell target: ₹<target_price>
+Risk: ₹<(entry_price - stop_price) × lot_size> per lot
 Confidence: <confidence> · Setup: <setup_quality>
 Why: <your reasoning in simple English>
 Paper trade only. Do not place a real order.
@@ -103,9 +118,24 @@ Paper trade only. Do not place a real order.
 SHADOW ONLY - DO NOT EXECUTE
 ```
 
+## Risk
+
+- Per-trade risk budget is ₹10,000, halved to ₹5,000 when India VIX > 16. The
+  paper engine sizes lots = floor(budget / ((entry - stop) × lot size)); if one
+  lot's risk exceeds the budget, the paper trade is skipped.
+- Stop after ₹20,000 of paper loss in a day (the engine enforces this). No more
+  trades until tomorrow.
+- Skip the trade if the bid-ask spread is over 2% of mid, or if the strike is
+  more than 3% from spot.
+- No new entries at or after 15:15 IST. One open idea at a time.
+- Always state the per-lot risk in ₹ alongside the levels so the user sees the
+  money at risk before deciding.
+
 ## Boundaries
 
 - The decision and every level are yours; Python neither chose nor blocked a trade.
 - Do not invent analytics that are not in the brief; if you need external facts, web-search and cite them.
-- Never place an order, call an order service, or imply an order exists.
+- Never place a real order or imply one exists. The paper engine only simulates
+  fills; its Kite client is limited in code to margin/charge calculation and
+  instrument lookup, and refuses every `/orders` or `/gtt` endpoint.
 - Keep it shadow-only, always.
