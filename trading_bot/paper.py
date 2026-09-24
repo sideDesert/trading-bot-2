@@ -9,11 +9,14 @@ broker order endpoint.
 Commands:
   run      Run the engine loop for today's session.
   status   Show today's paper trades and day P&L.
+  report     Show all-time paper P&L, win rate, and a per-day breakdown.
+  dashboard  Build an HTML dashboard of all paper trades and open it.
 """
 
 import argparse
 import json
 import math
+import os
 import sys
 import time as time_mod
 from dataclasses import dataclass, fields
@@ -142,6 +145,9 @@ class PaperStore:
 
     def active(self) -> "list[PaperTrade]":
         return self._select("status IN ('PENDING_ENTRY', 'OPEN')", [])
+
+    def all(self) -> "list[PaperTrade]":
+        return self._select("TRUE", [])
 
     def for_day(self, day: date) -> "list[PaperTrade]":
         return self._select("substr(created_at, 1, 10) = ?", [day.isoformat()])
@@ -418,6 +424,62 @@ def format_status(trades) -> str:
     return "\n".join(lines)
 
 
+def _paint(text: str, code: str, color: bool) -> str:
+    return f"\033[{code}m{text}\033[0m" if color else text
+
+
+def _money(value: float, color: bool) -> str:
+    text = f"₹{value:,.0f}"
+    if value > 0:
+        return _paint(text, "32", color)
+    if value < 0:
+        return _paint(text, "31", color)
+    return text
+
+
+def format_report(trades, color: bool = False) -> str:
+    closed = [t for t in trades if t.status == "CLOSED" and t.net_pnl is not None]
+    if not closed:
+        return "No closed paper trades yet."
+    wins = [t.net_pnl for t in closed if t.net_pnl > 0]
+    losses = [t.net_pnl for t in closed if t.net_pnl <= 0]
+    rate = len(wins) / len(closed)
+    rate_text = _paint(f"{rate:.0%}", "32" if rate >= 0.5 else "31", color)
+    net = sum(t.net_pnl for t in closed)
+    lines = [
+        _paint("Paper trading report", "1", color),
+        f"Closed paper trades: {len(closed)} ({_paint(f'{len(wins)} won', '32', color)}, "
+        f"{_paint(f'{len(losses)} lost', '31', color)}, win rate {rate_text})",
+        f"Gross P&L:   {_money(sum(t.gross_pnl for t in closed), color)}",
+        f"Charges:     {_paint(f'₹{sum(t.charges for t in closed):,.0f}', '33', color)}",
+        _paint("Net P&L:     ", "1", color) + _paint(_money(net, color), "1", color),
+    ]
+    if wins:
+        lines.append(f"Average win:  {_money(sum(wins) / len(wins), color)}")
+    if losses:
+        lines.append(f"Average loss: {_money(sum(losses) / len(losses), color)}")
+    lines.append(f"Best trade:   {_money(max(t.net_pnl for t in closed), color)}")
+    lines.append(f"Worst trade:  {_money(min(t.net_pnl for t in closed), color)}")
+    other = {}
+    for t in trades:
+        if t.status in ("SKIPPED", "CANCELLED"):
+            other[t.status] = other.get(t.status, 0) + 1
+    if other:
+        lines.append(_paint("Not traded: " + ", ".join(f"{n} {k.lower()}" for k, n in sorted(other.items())), "2", color))
+    lines.append("")
+    lines.append(_paint("By day:", "1", color))
+    days = {}
+    for t in closed:
+        days.setdefault(t.created_at[:10], []).append(t.net_pnl)
+    for day in sorted(days):
+        pnl = days[day]
+        lines.append(f"  {day}  {len(pnl)} trade(s)  net {_money(sum(pnl), color)}")
+    open_now = [t for t in trades if t.status in ("PENDING_ENTRY", "OPEN")]
+    if open_now:
+        lines.append(_paint(f"({len(open_now)} trade(s) still pending/open, not included)", "2", color))
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="trading_bot.paper", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--paper-db", type=Path, default=Path("data/paper.duckdb"))
@@ -427,6 +489,10 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run")
     run.add_argument("--no-kite", action="store_true", help="Skip Kite margin/charges; use local cost model")
     sub.add_parser("status")
+    sub.add_parser("report")
+    dash = sub.add_parser("dashboard")
+    dash.add_argument("--out", type=Path, default=Path("data/paper-dashboard.html"))
+    dash.add_argument("--no-open", action="store_true")
     return parser
 
 
@@ -435,6 +501,21 @@ def main(argv=None) -> None:
     store = PaperStore(args.paper_db)
     if args.command == "status":
         print(format_status(store.for_day(datetime.now(IST).date())))
+        print(BOUNDARY)
+        return
+    if args.command == "dashboard":
+        import webbrowser
+        from .paper_dashboard import render_dashboard
+
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(render_dashboard(store.all(), datetime.now(IST)), encoding="utf-8")
+        print(f"Dashboard written to {args.out}")
+        if not args.no_open:
+            webbrowser.open(args.out.resolve().as_uri())
+        return
+    if args.command == "report":
+        use_color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+        print(format_report(store.all(), color=use_color))
         print(BOUNDARY)
         return
     load_env_file(args.env_file, names=("UPSTOX_ACCESS_TOKEN", "KITE_API_KEY", "KITE_ACCESS_TOKEN"))

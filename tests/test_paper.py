@@ -13,6 +13,7 @@ from trading_bot.paper import (
     PaperTrade,
     day_net_pnl,
     run_loop,
+    format_report,
     format_status,
     risk_budget,
     size_lots,
@@ -237,6 +238,47 @@ class SkipTests(EngineTestBase):
         self.drop(payload())
         self.engine.tick(T0 + timedelta(seconds=5))
         self.assertEqual(len(self.store.for_day(T0.date())), 1)
+
+
+class ReportTests(EngineTestBase):
+    def closed(self, decision_id, day, net, gross, charges=50.0):
+        stamp = f"2026-09-{day:02d}T10:00:00+05:30"
+        return PaperTrade(
+            decision_id=decision_id, created_at=stamp, decided_at=stamp, status="CLOSED",
+            action="LONG_CALL", instrument_key=KEY, strike=23050.0, limit_entry=100.0,
+            stop_price=80.0, target_price=140.0, gross_pnl=gross, charges=charges, net_pnl=net,
+        )
+
+    def test_empty_report(self):
+        self.assertEqual(format_report(self.store.all()), "No closed paper trades yet.")
+
+    def test_report_totals_and_days(self):
+        self.store.upsert(self.closed("a", 25, 4950.0, 5000.0))
+        self.store.upsert(self.closed("b", 25, -2050.0, -2000.0))
+        self.store.upsert(self.closed("c", 28, 950.0, 1000.0))
+        self.store.upsert(PaperTrade(
+            decision_id="s", created_at="2026-09-28T11:00:00+05:30", decided_at="2026-09-28T11:00:00+05:30",
+            status="SKIPPED", action="LONG_PUT", instrument_key=KEY, strike=23050.0,
+            limit_entry=100.0, stop_price=80.0, target_price=140.0, exit_reason="DECISION_TOO_OLD",
+        ))
+        text = format_report(self.store.all())
+        self.assertIn("Closed paper trades: 3 (2 won, 1 lost, win rate 67%)", text)
+        self.assertIn("Gross P&L:   ₹4,000", text)
+        self.assertIn("Charges:     ₹150", text)
+        self.assertIn("Net P&L:     ₹3,850", text)
+        self.assertIn("Average win:  ₹2,950", text)
+        self.assertIn("Average loss: ₹-2,050", text)
+        self.assertIn("Not traded: 1 skipped", text)
+        self.assertIn("2026-09-25  2 trade(s)  net ₹2,900", text)
+        self.assertIn("2026-09-28  1 trade(s)  net ₹950", text)
+        self.assertNotIn("\033[", text)
+
+    def test_report_colors_profit_green_and_loss_red(self):
+        self.store.upsert(self.closed("a", 25, 4950.0, 5000.0))
+        self.store.upsert(self.closed("b", 25, -2050.0, -2000.0))
+        text = format_report(self.store.all(), color=True)
+        self.assertIn("\033[32m₹4,950\033[0m", text)
+        self.assertIn("\033[31m₹-2,050\033[0m", text)
 
 
 class RunLoopTests(EngineTestBase):
