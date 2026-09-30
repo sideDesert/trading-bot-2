@@ -37,6 +37,10 @@ ends with `SHADOW ONLY - DO NOT EXECUTE`.
 
    If `status` is `NO_MARKET_DATA`, say so plainly and stop. If `fetch_status`
    is not `OK`, the numbers may be stale — weigh that and say so.
+   `fetch_status` of `FETCH_FAILED:<error>` means the fetch died and the
+   payload is the previous cycle's context unchanged (same `meta.ts_ist`):
+   retry the command once and only decide on a fresh `fetch_status: OK`
+   payload. Never decide on the echoed stale payload.
 
 2. Optionally web-search for anything that changes the read *today*: NIFTY/India
    market news, global cues (US markets, crude, USDINR), scheduled events (RBI,
@@ -87,6 +91,26 @@ ends with `SHADOW ONLY - DO NOT EXECUTE`.
    buy at `entry_price` valid for 10 minutes, then exits at stop, target, or the
    15:20 square-off using live bid/ask.
 
+   Engine recovery (observed 25-Sep-2026): if `record` returned
+   `paper_order_queued: true` but `paper status` then shows nothing, the engine
+   may have died — ingesting a decision triggers a Kite instrument fetch, and a
+   transient network error there crashes the process. Check its output, restart
+   it in a background shell; unconsumed inbox files are re-ingested on restart,
+   so the trade is not lost.
+
+
+## Loop mode (user asks for repeated checks)
+
+When the user asks to run on an interval (e.g. every 5 minutes):
+- Start the paper engine in a background shell if it is not already running,
+  then schedule each cycle yourself with a background
+  `sleep <N> && .venv/bin/python -m trading_bot.paper status && .venv/bin/python -m trading_bot.agent_brain context`.
+- While a position is PENDING_ENTRY or OPEN, lead with its P&L line, record a
+  NO_TRADE hold note for history, and never add a second idea.
+- Keep unchanged cycles to one or two lines for the user. Interrupt the loop
+  for fills, stop/target hits, daily-loss proximity, data failures, or a user
+  message — not for unchanged chop.
+- End the day at the daily-loss halt, 15:15 with nothing open, or the user's say-so.
 
 ## User output
 
