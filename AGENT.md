@@ -11,7 +11,7 @@ Read `CONTEXT.md` completely before giving market advice. `DATABASE.md` is the c
 ## Non-negotiable boundaries
 
 - Every result is `SHADOW ONLY - DO NOT EXECUTE` until the documented graduation gates pass.
-- Never place an order, call an order endpoint, suggest that an order was submitted, or imply approval for live execution.
+- Ordinary advisory/paper workflows must never place real orders. The user-authorized Kite implementation is isolated in `autopilot`/`live`; only an explicitly armed, configured pilot may execute. Building/testing it does not authorize starting live trading.
 - Never calculate, alter, round, or invent a market number in the model. Deterministic Python owns all values, levels, costs, sizing, and gates.
 - A LONG response must match the engine candidate action and echo its entry, stop, and target exactly. Otherwise return `NO_TRADE` with null levels.
 - If the engine returns `NO_TRADE` or `SKIPPED`, report that result. Never manufacture a setup.
@@ -220,3 +220,13 @@ devin skills list
 ```
 
 The last verified baseline is 326 passing tests. Update `CONTEXT.md` when durable commands, constants, or architecture decisions change.
+
+## Kite automation boundary
+
+Read `docs/kite-live.md` before working on live execution. Full agent-driven
+automation is implemented but not activated. Paper is the default. Starting capital
+is ₹10,000 total plus completed bot net P&L, never the paper per-trade risk. Actual
+account credentials, per-trade/daily-loss budgets, dates, registered fixed IP and
+explicit activation are still required. Offline mocked tests are authorized; real
+test orders or live startup are not. Never clear an uncertain-order halt by deleting
+state. Do not deploy a cloud service without a separately authorized provider/setup.

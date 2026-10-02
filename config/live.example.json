@@ -1,0 +1,13 @@
+{
+  "account_id": null,
+  "risk_per_trade_inr": null,
+  "capital_limit_inr": 10000,
+  "daily_loss_limit_inr": null,
+  "stop_limit_buffer": 1.0,
+  "fee_reserve_inr": 200,
+  "max_lots": 1,
+  "pilot_start": null,
+  "pilot_end": null,
+  "decision_interval_seconds": 120,
+  "model_timeout_seconds": 60
+}

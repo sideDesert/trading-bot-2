@@ -1,6 +1,8 @@
 # CONTEXT.md — trading-bot
 
-NIFTY options intraday advisory bot: deterministic Python computes market features, levels, costs, sizing, and safety gates; an LLM may only validate a supplied candidate or choose `NO_TRADE`; every model decision is shadow-only; a human remains the only possible executor. Research in `research/` is the evidence baseline, but explicit decisions here and in `DATABASE.md` supersede conflicting synthesis implementation details.
+The original advisory and paper paths remain shadow-only. An explicitly armed agent-driven Kite autopilot was added on 03-Oct-2026; see `docs/kite-live.md`. No live pilot has been activated.
+
+Original NIFTY options intraday advisory bot: deterministic Python computes market features, levels, costs, sizing, and safety gates; an LLM may only validate a supplied candidate or choose `NO_TRADE`; every model decision is shadow-only; a human remains the only possible executor. Research in `research/` is the evidence baseline, but explicit decisions here and in `DATABASE.md` supersede conflicting synthesis implementation details.
 
 ## Operating mode and approved pilot decisions
 
@@ -157,3 +159,11 @@ NIFTY options intraday advisory bot: deterministic Python computes market featur
 - IV percentile remains unavailable until 252 completed prior-day ATM-IV observations accumulate.
 - MAE/MFE uses a conservative one-minute option-LTP proxy in the REST pilot; true tick-mid excursions require a future WebSocket phase.
 - No performance claim or actionable alert is allowed until the forward graduation gates pass. All 2026 market, tax, fee, lot, and calendar constants must be re-verified when they change and before any future live-execution phase.
+
+## Explicit Kite autopilot (03-Oct-2026)
+
+- User authorized building full automation with Kite, not running it now. Agent decisions remain independent via `agent_brain`; `autopilot` schedules a signed-in Codex CLI without per-trade approval. Default mode is paper. No other broker or cloud deployment was added.
+- Live startup requires `--mode live --enable-live --config`, matching account, daily credentials, fixed registered outbound IP, and explicit trade-risk/daily-loss/pilot-date settings. The example intentionally contains null activation inputs.
+- Starting allocation is ₹10,000 total plus immutable completed bot net P&L, bounded by cash and commitments. Profits can be reused; unrealized gains or deposits cannot raise the allocation. Separate loss and lot ceilings remain enforced.
+- Isolated live SQLite journal/inbox, IOC limit buys, confirmed partial-fill protection via broker DAY SL sell limits, single-sell target/exit modifications, timeout tag reconciliation and sticky fail-closed entry halts. Base `KiteClient` remains calculation-only.
+- Full startup/recovery/hosting workflow and limitations: `docs/kite-live.md`. Stop limits can gap and remain unfilled; no guaranteed loss cap, atomic entry+stop, overnight protection, profitability or live-readiness claim.

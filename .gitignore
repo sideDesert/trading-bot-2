@@ -8,3 +8,6 @@ data/
 
 # claude code local
 .claude/scheduled_tasks.lock
+
+# Private pilot settings
+config/live.json

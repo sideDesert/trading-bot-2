@@ -198,3 +198,27 @@ A human approves or rejects the proposed change
 ```
 
 The analysis agent must use both the user's verdict and the objective trade data. It must not update the system prompt automatically after an individual trade.
+
+
+## Separate live execution journal (03-Oct-2026)
+
+The pilot/advisory DuckDB schema above remains unchanged. Explicit live execution
+uses `data/live/state.sqlite3` and `data/live/inbox`, never `paper.duckdb` or the
+paper inbox. Agent decisions still persist in the existing `agent_decision` table
+through `agent_brain`; live boundaries/lot proposals are recorded before execution.
+
+SQLite tables:
+
+- `live_meta(key PRIMARY KEY, value)`: immutable account identity and starting allocation binding.
+- `live_trade(decision_id PRIMARY KEY, state JSON text)`: contract, prices, entry/sell tags and IDs, monotonic confirmed quantities, broker snapshots, pending write intent, status, sticky halt, realized fills/charges/net P&L. CLOSED records cannot be rewritten.
+- `live_event(id PRIMARY KEY, decision_id, event JSON text)`: append-only state-transition snapshots. Credentials/headers are never stored. Identical snapshots do not create duplicate events.
+
+FULL-synchronous transactions commit intents before broker mutations. Exclusive
+runner locking prevents concurrent controllers of one journal. Broker order tags
+identify crash-recovery placements but are not server-side idempotency keys;
+uncertain unmatched writes cannot be retried automatically. No assumed fills enter
+the capital ledger. Closed P&L is derived from actual `/trades` and broker charges
+calculation for executed orders and stored immutably for allocation recovery.
+Starting allocation plus completed net P&L controls profit reuse, bounded by broker
+cash/commitments; missing fills/costs fail closed. See `docs/kite-live.md` for the
+DAY-order and contract-note reconciliation limitations.

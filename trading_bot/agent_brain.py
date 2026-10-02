@@ -9,7 +9,7 @@ Python side only *gathers* facts:
 
 The agent reads that context, may web-search for macro/event colour, then makes
 the entire call itself (direction + strike + entry/stop/target) and records it
-with `record`. The system stays shadow-only; nothing is ever executed.
+with `record`. Paper remains the default; explicit live decisions use a separate inbox.
 
 Commands:
   context   Fetch fresh data + analytics + history as one JSON brief. No verdict.
@@ -21,6 +21,7 @@ import argparse
 import json
 import sys
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -195,8 +196,8 @@ def _validate_decision(args) -> None:
         raise AgentBrainError("a trade requires --strike and --instrument-key")
 
 
-def queue_paper_order(inbox: Path, store, row: AgentDecisionRow) -> Path:
-    market = store.latest_market_data() or {}
+def queue_paper_order(inbox: Path, store, row: AgentDecisionRow, proposed_lots=None, market_context=None) -> Path:
+    market = market_context if market_context is not None else (store.latest_market_data() or {})
     expiry = market.get("expiry_date")
     payload = {
         "decision_id": row.decision_id,
@@ -210,7 +211,10 @@ def queue_paper_order(inbox: Path, store, row: AgentDecisionRow) -> Path:
         "lot_size": market.get("lot_size"),
         "expiry_date": str(expiry)[:10] if expiry is not None else None,
         "india_vix": market.get("india_vix"),
+        "context_ts": row.context_ts.isoformat() if row.context_ts else None,
     }
+    if proposed_lots is not None:
+        payload["proposed_lots"] = proposed_lots
     inbox.mkdir(parents=True, exist_ok=True)
     path = inbox / f"{row.decision_id}.json"
     tmp = path.with_suffix(".tmp")
@@ -219,7 +223,7 @@ def queue_paper_order(inbox: Path, store, row: AgentDecisionRow) -> Path:
     return path
 
 
-def do_record(store, args, now: datetime, inbox: "Path | None" = None) -> dict:
+def do_record(store, args, now: datetime, inbox: "Path | None" = None, *, market_context=None, analytics_snapshot=None) -> dict:
     _validate_decision(args)
     if not args.rationale or not args.rationale.strip():
         raise AgentBrainError("rationale is required")
@@ -244,21 +248,29 @@ def do_record(store, args, now: datetime, inbox: "Path | None" = None) -> dict:
         stop_price=args.stop_price,
         target_price=args.target_price,
         sources=sources,
-        analytics_snapshot=None,
+        analytics_snapshot=analytics_snapshot,
         nifty_spot=args.nifty_spot,
         boundary=BOUNDARY,
     )
+    mode = getattr(args, "execution_mode", "paper")
+    if mode not in ("paper", "live"):
+        raise AgentBrainError("execution mode must be paper or live")
+    if mode == "live":
+        lots = getattr(args, "proposed_lots", None)
+        if args.action != "NO_TRADE" and (type(lots) is not int or lots < 1):
+            raise AgentBrainError("live decision requires an integer proposed lot count")
+        row = replace(row, boundary="LIVE DECISION - EXECUTION REQUIRES AN EXPLICITLY ARMED RUNNER")
     store.insert_agent_decision(row)
     result = {
         "ok": True,
         "status": "RECORDED",
         "decision_id": decision_id,
         "action": args.action,
-        "boundary": BOUNDARY,
+        "boundary": row.boundary,
     }
     if inbox is not None and args.action != "NO_TRADE":
-        queue_paper_order(inbox, store, row)
-        result["paper_order_queued"] = True
+        queue_paper_order(inbox, store, row, proposed_lots=args.proposed_lots if mode == "live" else None, market_context=market_context)
+        result[mode + "_order_queued"] = True
     return result
 
 
@@ -273,6 +285,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     rec = sub.add_parser("record")
     rec.add_argument("--action", required=True)
+    rec.add_argument("--execution-mode", choices=("paper", "live"), default="paper")
+    rec.add_argument("--proposed-lots", type=int, default=None)
     rec.add_argument("--strike", type=float, default=None)
     rec.add_argument("--instrument-key", dest="instrument_key", default=None)
     rec.add_argument("--entry-price", dest="entry_price", type=float, default=None)
@@ -323,7 +337,7 @@ def run(
                     store,
                     args,
                     datetime.now(IST),
-                    inbox=args.db_path.parent / "paper-inbox",
+                    inbox=(args.db_path.parent / "paper-inbox" if args.execution_mode == "paper" else args.db_path.parent / "live" / "inbox"),
                 )
             else:
                 payload = {

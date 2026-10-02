@@ -26,6 +26,12 @@ class KiteError(Exception):
     pass
 
 
+class KiteHTTPError(KiteError):
+    def __init__(self, status_code, message=''):
+        self.status_code = status_code
+        super().__init__(f'Kite HTTP {status_code}: {message}'.strip())
+
+
 class KiteForbiddenEndpoint(KiteError):
     pass
 
@@ -52,7 +58,7 @@ def _default_transport(method, url, headers, body, timeout) -> bytes:
             message = json.loads(exc.read()).get("message", "")
         except ValueError:
             message = ""
-        raise KiteError(f"Kite HTTP {exc.code}: {message}".strip())
+        raise KiteHTTPError(exc.code, message)
     except urllib.error.URLError as exc:
         raise KiteError(f"Could not reach Kite: {exc.reason}")
 
