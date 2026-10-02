@@ -46,7 +46,10 @@ never paste credentials into chat, source code or browser-side configuration.
 
 The service binds only to loopback. Place it behind a trusted HTTPS reverse proxy
 on the same host. Preserve the original `Host` and browser `Origin`; the configured
-origin is checked exactly. Configure request-size/time limits and redact callback
+origin is checked exactly. `Referrer-Policy: strict-origin` excludes callback
+paths/query tokens while preserving the Origin header on browser form posts;
+`no-referrer` would turn those origins into `null` and block sign-in.
+Configure request-size/time limits and redact callback
 query strings from proxy/access/error logs. The Python handler disables request
 logging because callback queries carry short-lived credentials. Firewall direct
 backend access. Persist the live root on private encrypted storage and run the web

@@ -69,7 +69,7 @@ class DashboardApp:
         return hashlib.scrypt(password.encode(), salt=self.salt, n=16384, r=8, p=1)
 
     def _reply(self, status, body='', headers=None, content_type='text/html; charset=utf-8'):
-        result = {'Content-Type':content_type, 'Cache-Control':'no-store', 'Referrer-Policy':'no-referrer',
+        result = {'Content-Type':content_type, 'Cache-Control':'no-store', 'Referrer-Policy':'strict-origin',
             'X-Content-Type-Options':'nosniff', 'X-Frame-Options':'DENY',
             'Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self' https://kite.zerodha.com; frame-ancestors 'none'; base-uri 'none'"}
         if self.secure_cookie: result['Strict-Transport-Security']='max-age=31536000'

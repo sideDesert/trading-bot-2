@@ -55,6 +55,8 @@ class DashboardTests(unittest.TestCase):
     def test_csrf_and_origin_required_for_mutations(self):
         csrf = self.login()
         self.assertEqual(self.request('POST','/pause',{})[0],403)
+        self.assertEqual(self.request('POST','/pause',{'csrf':csrf},dict(self.headers,Origin='null'))[0],403)
+        self.assertEqual(self.request('POST','/login',{'password':'a-private-password-long'},dict(self.headers,Origin='null'))[0],403)
         self.assertEqual(self.request('POST','/pause',{'csrf':csrf}, dict(self.headers,Origin='https://evil.example'))[0],403)
         self.assertFalse((self.root/'PAUSE').exists())
         self.assertEqual(self.request('POST','/pause',{'csrf':csrf})[0],200)
