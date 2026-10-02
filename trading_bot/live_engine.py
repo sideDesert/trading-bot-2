@@ -9,6 +9,7 @@ from .features import IST
 from .kite.client import KiteError, find_option
 from .kite.execution import AmbiguousOrderError
 from .live_store import LiveHalt
+from .live_budget import capital_from_trades
 from .market_rules import TradingCalendar
 
 TERMINAL = frozenset({'COMPLETE', 'CANCELLED', 'REJECTED'})
@@ -65,27 +66,9 @@ class LiveEngine:
         self.store.bind_capital(config.capital_limit_inr)
 
     def capital_status(self, cash=None):
-        trades = self.store.all()
-        completed = [t for t in trades if t['status'] == 'CLOSED']
-        for trade in completed:
-            if any(type(trade.get(k)) not in (int, float) or not math.isfinite(trade[k])
-                   for k in ('net_pnl', 'charges', 'gross_pnl')):
-                raise LiveHalt('Completed net P&L or charges missing; capital unavailable')
-            if trade['charges'] < 0 or abs(trade['net_pnl']-(trade['gross_pnl']-trade['charges'])) > .001:
-                raise LiveHalt('Completed capital ledger inconsistent')
-        net = sum(t['net_pnl'] for t in completed)
-        allocation = self.config.capital_limit_inr + net
-        commitments = 0
-        for trade in self.store.active():
-            entry = trade.get('entry', {})
-            remaining = entry.get('filled', 0) - sum(s.get('filled', 0) for s in trade['sells'])
-            pending_buy = 0 if entry.get('snapshot', {}).get('status') in TERMINAL else trade['quantity']-entry.get('filled', 0)
-            commitments += max(0, remaining+pending_buy)*trade['payload']['entry_price'] + self.config.fee_reserve_inr
         cash = self.broker.cash_available() if cash is None else cash
-        if not math.isfinite(cash): raise LiveHalt('Broker cash unavailable')
-        return dict(starting_capital_inr=self.config.capital_limit_inr, realized_net_pnl_inr=net,
-                    allocation_inr=allocation, committed_inr=commitments,
-                    broker_cash_inr=cash, available_for_new_trade_inr=max(0, min(allocation-commitments, cash)))
+        return capital_from_trades(self.store.all(), self.config.capital_limit_inr,
+                                  self.config.fee_reserve_inr, cash)
 
     def _account(self):
         if self.broker.profile().get('user_id') != self.config.account_id:

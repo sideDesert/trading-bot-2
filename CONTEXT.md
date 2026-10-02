@@ -147,7 +147,7 @@ Original NIFTY options intraday advisory bot: deterministic Python computes mark
 ## Verification
 
 - Environment: `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt`.
-- Full offline gate: `.venv/bin/python -m unittest discover -s tests -v` (**372 tests**) and `.venv/bin/python -m compileall -q trading_bot tests`.
+- Full offline gate: `.venv/bin/python -m unittest discover -s tests -v` (**445 tests**) and `.venv/bin/python -m compileall -q trading_bot tests`.
 - CLI help gates: modules `trading_bot.upstox`, `trading_bot.collector`, `trading_bot.agent_tool`, `trading_bot.advisory`, `trading_bot.feedback`, and `trading_bot.prompt_analysis`.
 - Devin discovers `/nifty-advice` from `.devin/skills/nifty-advice` and `/trade-result` from `.devin/skills/trade-result`.
 - Bounded live Upstox and harness validation passed on 17-Sep-2026: concrete expiry `2026-09-22`, dynamic lot 65, nine-row chain window, historical baselines, features, tick-valid candidate levels, DuckDB write, immediate 2,708-byte snapshot, and `agent_tool prepare` without any model API key. The after-hours request correctly returned engine-owned `NO_TRADE` with the shadow boundary.
@@ -167,3 +167,10 @@ Original NIFTY options intraday advisory bot: deterministic Python computes mark
 - Starting allocation is ₹10,000 total plus immutable completed bot net P&L, bounded by cash and commitments. Profits can be reused; unrealized gains or deposits cannot raise the allocation. Separate loss and lot ceilings remain enforced.
 - Isolated live SQLite journal/inbox, IOC limit buys, confirmed partial-fill protection via broker DAY SL sell limits, single-sell target/exit modifications, timeout tag reconciliation and sticky fail-closed entry halts. Base `KiteClient` remains calculation-only.
 - Full startup/recovery/hosting workflow and limitations: `docs/kite-live.md`. Stop limits can gap and remain unfilled; no guaranteed loss cap, atomic entry+stop, overnight protection, profitability or live-readiness claim.
+
+## Private Kite dashboard (03-Oct-2026)
+
+- `python -m trading_bot.live_web` serves a lightweight private mobile page behind HTTPS; `--demo` is a credential-free loopback preview. No deployment, real credentials or live startup was performed.
+- Official Kite login returns to registered `/kite/callback`; server-side exchange verifies the account and atomically writes a private `0600` daily token file. The runner reloads this file each tick. Browser sessions and single-use callback state are private and expire.
+- Five-second page polling reads persisted broker facts; broker reads refresh at most every 15 seconds and expire after 30 seconds. Cash snapshots are bound to the daily login generation. The same capital calculation powers execution and dashboard; unverified cash/costs remain unknown.
+- Stop new trades creates `data/live/PAUSE`; existing protection/exits continue. No web order-write, start or resume route exists. HTTPS origin/password, registered callback, private server secrets and hosting remain operator setup. See `docs/kite-dashboard.md`.

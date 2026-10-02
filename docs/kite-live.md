@@ -153,6 +153,10 @@ A market-day service may start around 09:00 IST (09:45 earliest new entry) and s
 **after** the 15:20 exit has been confirmed. The existing calendar fails closed on
 unsupported years and closed days; special short sessions flatten 20 minutes before
 close. Do not blindly power off at 15:20: an unfilled exit can leave a position.
+The private browser login/dashboard is described in `kite-dashboard.md`; it writes
+a shared private token file which a running service reloads each tick. Connecting
+the dashboard does not arm the runner. `PAUSE` stops only new trades and leaves
+existing exits running, unlike `STOP`.
 Daily token refresh and attention handling still require an operator. Fresh login
 is needed each morning: Kite documents token expiry at 06:00 the next day, and a
 master logout can invalidate it earlier. No overnight-refresh workaround is used.

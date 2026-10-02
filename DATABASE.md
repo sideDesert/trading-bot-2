@@ -209,7 +209,7 @@ through `agent_brain`; live boundaries/lot proposals are recorded before executi
 
 SQLite tables:
 
-- `live_meta(key PRIMARY KEY, value)`: immutable account identity and starting allocation binding.
+- `live_meta(key PRIMARY KEY, value)`: immutable account identity and starting allocation binding, plus mutable allowlisted `dashboard_broker` read snapshots and `runner_heartbeat` timestamps. Broker snapshot fields are allowlisted and exclude credentials; freshness is tied to a non-secret daily session generation.
 - `live_trade(decision_id PRIMARY KEY, state JSON text)`: contract, prices, entry/sell tags and IDs, monotonic confirmed quantities, broker snapshots, pending write intent, status, sticky halt, realized fills/charges/net P&L. CLOSED records cannot be rewritten.
 - `live_event(id PRIMARY KEY, decision_id, event JSON text)`: append-only state-transition snapshots. Credentials/headers are never stored. Identical snapshots do not create duplicate events.
 
@@ -222,3 +222,7 @@ calculation for executed orders and stored immutably for allocation recovery.
 Starting allocation plus completed net P&L controls profit reuse, bounded by broker
 cash/commitments; missing fills/costs fail closed. See `docs/kite-live.md` for the
 DAY-order and contract-note reconciliation limitations.
+
+Daily Kite credentials live separately in private `data/live/kite-session.json`
+(mode `0600`, atomic replacement), never in a trade/event row. Dashboard sessions
+and single-use callback state remain in memory. See `docs/kite-dashboard.md`.

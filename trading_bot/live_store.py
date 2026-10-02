@@ -44,6 +44,19 @@ class LiveStore:
         finally:
             conn.close()
 
+    def metadata(self, key):
+        with self._connect() as conn:
+            row = conn.execute('SELECT value FROM live_meta WHERE key=?', (key,)).fetchone()
+        if not row: return None
+        return row[0] if key == 'account' else json.loads(row[0])
+
+    def set_metadata(self, key, value):
+        if key not in ('dashboard_broker', 'runner_heartbeat'):
+            raise LiveHalt('Runtime metadata key not permitted')
+        with self._connect() as conn:
+            conn.execute('INSERT OR REPLACE INTO live_meta VALUES (?, ?)',
+                         (key, json.dumps(value, allow_nan=False)))
+
     def bind_account(self, account):
         with self._connect() as conn:
             row = conn.execute("SELECT value FROM live_meta WHERE key='account'").fetchone()

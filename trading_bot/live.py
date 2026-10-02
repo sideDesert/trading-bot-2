@@ -11,6 +11,7 @@ from pathlib import Path
 from .config import load_env_file
 from .features import IST
 from .kite.execution import KiteExecutionClient
+from .kite.session import execution_token
 from .live_engine import LiveConfig, LiveEngine, positive
 from .live_store import LiveStore, LiveHalt, runner_lock
 from .upstox.client import UpstoxClient
@@ -71,6 +72,7 @@ class LiveRunner:
         self.clock = clock
 
     def ingest(self, now):
+        if (self.root/'PAUSE').exists() or (self.root/'STOP').exists(): return
         inbox = self.root/'inbox'
         inbox.mkdir(parents=True, exist_ok=True)
         for path in sorted(inbox.glob('*.json')):
@@ -81,8 +83,12 @@ class LiveRunner:
                 if not self.engine.store.get(payload['decision_id']):
                     validate_contract(payload, self.upstox.option_contracts(expiry_date=payload['expiry_date']))
                     def quote_check():
+                        if (self.root/'PAUSE').exists() or (self.root/'STOP').exists():
+                            raise LiveHalt('New trades paused')
                         raw = self.upstox.market_quotes([payload['instrument_key']])
                         book = fresh_book(raw, payload['instrument_key'], self.clock())
+                        if (self.root/'PAUSE').exists() or (self.root/'STOP').exists():
+                            raise LiveHalt('New trades paused')
                         if not book or (book[1]-book[0])/((book[1]+book[0])/2) > .02:
                             raise LiveHalt('Selected option quote stale/missing or spread >2%')
                     self.engine.accept(payload, self.clock(), clock=self.clock, before_submit=quote_check)
@@ -110,7 +116,14 @@ class LiveRunner:
                 return book[0] if book else None
             except Exception:
                 return None
-        self.engine.step(now, quote_provider=fresh_bid, clock=self.clock, kill=kill)
+        try:
+            token = execution_token(self.root, self.engine.config.account_id, self.clock())
+            if token: self.engine.broker.refresh_access_token(token)
+            self.engine.step(now, quote_provider=fresh_bid, clock=self.clock, kill=kill)
+            self.engine.store.set_metadata('runner_heartbeat',dict(status='RUNNING',checked_at=self.clock().isoformat()))
+        except Exception:
+            self.engine.store.set_metadata('runner_heartbeat',dict(status='ATTENTION',checked_at=self.clock().isoformat()))
+            raise
 
 
 def build_parser():
@@ -147,7 +160,7 @@ def main(argv=None):
         config, start, end, _, _ = read_settings(args.config)
         load_env_file(args.env_file, names=('UPSTOX_ACCESS_TOKEN', 'KITE_API_KEY', 'KITE_ACCESS_TOKEN'))
         with runner_lock(args.root/'runner.lock'):
-            broker = KiteExecutionClient(os.environ.get('KITE_API_KEY', ''), os.environ.get('KITE_ACCESS_TOKEN', ''), enabled=True)
+            broker = KiteExecutionClient(os.environ.get('KITE_API_KEY', ''), execution_token(args.root, config.account_id, datetime.now(IST), fallback=os.environ.get('KITE_ACCESS_TOKEN', '')), enabled=True)
             runner = LiveRunner(LiveEngine(LiveStore(args.root/'state.sqlite3'), broker, config), UpstoxClient.from_env(), args.root)
             print('LIVE EXECUTION ENABLED; broker-held stops are DAY stop-limit orders', flush=True)
             while True:

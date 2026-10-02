@@ -59,6 +59,12 @@ class KiteExecutionClient(KiteClient):
                 raise AmbiguousOrderError('Broker write response invalid; reconcile') from None
             raise KiteError('Broker response invalid') from None
 
+    def refresh_access_token(self, access_token):
+        if not isinstance(access_token, str) or not access_token or any(c.isspace() for c in access_token):
+            raise KiteError('Invalid access token')
+        api_key = self._headers['Authorization'].removeprefix('token ').split(':', 1)[0]
+        self._headers['Authorization'] = 'token '+api_key+':'+access_token
+
     def profile(self):
         return self._json('GET', '/user/profile')
 
@@ -129,3 +135,14 @@ class KiteExecutionClient(KiteClient):
         if not str(order_id).isdigit():
             raise KiteForbiddenEndpoint('Invalid order ID')
         return self._json('DELETE', '/orders/regular/' + str(order_id))
+
+
+class KiteMonitorClient(KiteExecutionClient):
+    """Dashboard broker reads; write endpoints remain impossible."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, enabled=True, **kwargs)
+
+    def _call(self, method, path, payload=None, timeout=15.0):
+        if method != 'GET':
+            raise KiteForbiddenEndpoint('Dashboard has no broker write access')
+        return super()._call(method, path, payload, timeout)

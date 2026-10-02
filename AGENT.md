@@ -219,7 +219,7 @@ Prompt proposals are never applied automatically.
 devin skills list
 ```
 
-The last verified baseline is 326 passing tests. Update `CONTEXT.md` when durable commands, constants, or architecture decisions change.
+The last verified offline baseline is 445 passing tests. Update `CONTEXT.md` when durable commands, constants, or architecture decisions change.
 
 ## Kite automation boundary
 
@@ -230,3 +230,10 @@ account credentials, per-trade/daily-loss budgets, dates, registered fixed IP an
 explicit activation are still required. Offline mocked tests are authorized; real
 test orders or live startup are not. Never clear an uncertain-order halt by deleting
 state. Do not deploy a cloud service without a separately authorized provider/setup.
+
+
+The private browser dashboard is documented in `docs/kite-dashboard.md`.
+`live_web --demo` is an offline preview. Web login never arms execution;
+`PAUSE` stops only new trades, while `STOP` requests exits. Preserve private token
+files and redact callback queries. Do not install real credentials or deploy/start
+a live service without explicit authorization.

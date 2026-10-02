@@ -22,6 +22,7 @@ from .collector import MarketDataCollector, CollectorConfig
 from .config import load_env_file
 from .features import IST
 from .kite.execution import KiteExecutionClient
+from .kite.session import execution_token
 from .live import LIVE_ROOT, LiveRunner, read_settings
 from .live_engine import LiveEngine, positive
 from .live_store import LiveStore, LiveHalt, runner_lock
@@ -189,7 +190,7 @@ def main(argv=None):
         lock_path = LIVE_ROOT/'runner.lock' if args.mode == 'live' else root/'runner.lock'
         with runner_lock(lock_path), ThreadPoolExecutor(max_workers=1) as pool:
             if args.mode == 'live':
-                broker = KiteExecutionClient(os.environ.get('KITE_API_KEY', ''), os.environ.get('KITE_ACCESS_TOKEN', ''), enabled=True)
+                broker = KiteExecutionClient(os.environ.get('KITE_API_KEY', ''), execution_token(root,config.account_id,datetime.now(IST),fallback=os.environ.get('KITE_ACCESS_TOKEN','')), enabled=True)
                 store = LiveStore(root/'state.sqlite3')
                 runner = LiveRunner(LiveEngine(store, broker, config), upstox, root)
                 inbox = root/'inbox'
@@ -212,7 +213,7 @@ def main(argv=None):
                 except Exception as error:
                     healthy = False
                     print('EXECUTION ATTENTION: '+type(error).__name__+'; decisions paused', file=sys.stderr, flush=True)
-                busy = bool(store.active()) or kill or not healthy
+                busy = bool(store.active()) or kill or not healthy or (root/'PAUSE').exists()
                 if args.mode == 'live': busy = busy or any(t.get('halted') for t in store.all())
                 if future and future.done():
                     try:
