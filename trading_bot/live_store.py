@@ -51,11 +51,14 @@ class LiveStore:
         return row[0] if key == 'account' else json.loads(row[0])
 
     def set_metadata(self, key, value):
-        if key not in ('dashboard_broker', 'runner_heartbeat'):
+        if key not in ('dashboard_broker', 'runner_heartbeat', 'entry_pause'):
             raise LiveHalt('Runtime metadata key not permitted')
         with self._connect() as conn:
             conn.execute('INSERT OR REPLACE INTO live_meta VALUES (?, ?)',
                          (key, json.dumps(value, allow_nan=False)))
+
+    def entry_pause_revision(self):
+        return (self.metadata('entry_pause') or {}).get('revision','initial')
 
     def bind_account(self, account):
         with self._connect() as conn:

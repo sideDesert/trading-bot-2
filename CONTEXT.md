@@ -147,7 +147,7 @@ Original NIFTY options intraday advisory bot: deterministic Python computes mark
 ## Verification
 
 - Environment: `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt`.
-- Full offline gate: `.venv/bin/python -m unittest discover -s tests -v` (**445 tests**) and `.venv/bin/python -m compileall -q trading_bot tests`.
+- Full offline gate: `.venv/bin/python -m unittest discover -s tests -v` (**449 tests**), `.venv/bin/python -m compileall -q trading_bot tests`, and `node --test tests/test_dashboard_controls.cjs` (**2 tests**).
 - CLI help gates: modules `trading_bot.upstox`, `trading_bot.collector`, `trading_bot.agent_tool`, `trading_bot.advisory`, `trading_bot.feedback`, and `trading_bot.prompt_analysis`.
 - Devin discovers `/nifty-advice` from `.devin/skills/nifty-advice` and `/trade-result` from `.devin/skills/trade-result`.
 - Bounded live Upstox and harness validation passed on 17-Sep-2026: concrete expiry `2026-09-22`, dynamic lot 65, nine-row chain window, historical baselines, features, tick-valid candidate levels, DuckDB write, immediate 2,708-byte snapshot, and `agent_tool prepare` without any model API key. The after-hours request correctly returned engine-owned `NO_TRADE` with the shadow boundary.
@@ -173,4 +173,9 @@ Original NIFTY options intraday advisory bot: deterministic Python computes mark
 - `python -m trading_bot.live_web` serves a lightweight private mobile page behind HTTPS; `--demo` is a credential-free loopback preview. No deployment, real credentials or live startup was performed.
 - Official Kite login returns to registered `/kite/callback`; server-side exchange verifies the account and atomically writes a private `0600` daily token file. The runner reloads this file each tick. Browser sessions and single-use callback state are private and expire.
 - Five-second page polling reads persisted broker facts; broker reads refresh at most every 15 seconds and expire after 30 seconds. Cash snapshots are bound to the daily login generation. The same capital calculation powers execution and dashboard; unverified cash/costs remain unknown.
-- Stop new trades creates `data/live/PAUSE`; existing protection/exits continue. No web order-write, start or resume route exists. HTTPS origin/password, registered callback, private server secrets and hosting remain operator setup. See `docs/kite-dashboard.md`.
+- Stop new trades creates `data/live/PAUSE`; existing protection/exits continue. The authenticated Resume control removes only PAUSE and cannot clear STOP or execution halts. No web order-write or runner-start route exists. HTTPS origin/password, registered callback, private server secrets and hosting remain operator setup. See `docs/kite-dashboard.md`.
+
+## Continuous integration
+
+- `.github/workflows/ci.yml` runs offline unittest discovery, compilation, JavaScript control-race regressions and whitespace checks on pushes, pull requests and manual dispatch. Python 3.12/3.13 run on Ubuntu; action revisions are pinned.
+- No broker/model credentials or live startup/deployment steps are included. A passing pipeline verifies mocked behavior, not live-readiness or profitability.

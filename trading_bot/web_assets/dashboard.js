@@ -1,4 +1,7 @@
 "use strict";
+let newTradesPaused = false;
+let entryControlPending = false;
+let entryControlRevision = 0;
 const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const formatRupees = amount => amount == null ? "—" : new Intl.NumberFormat("en-IN", {style:"currency", currency:"INR", maximumFractionDigits:0}).format(amount);
 const setText = (elementId, value) => { document.getElementById(elementId).textContent = value; };
@@ -26,11 +29,13 @@ function showRows(elementId, records, emptyMessage, describe) {
   }
 }
 async function refreshDashboard() {
+  const requestedControlRevision = entryControlRevision;
   try {
     const response = await fetch("/api/state", {cache:"no-store", credentials:"same-origin"});
     if (response.status === 401) { window.location.assign("/login"); return; }
     if (!response.ok) throw new Error("State unavailable");
     const dashboardState = await response.json();
+    if (entryControlPending || requestedControlRevision !== entryControlRevision) return;
     const connected = dashboardState.connection.status === "CONNECTED";
     setText("connection-status", dashboardState.demo ? "Preview · no account connected" : connected ? "Kite connected" : dashboardState.connection.status === "STALE" ? "Kite status needs refresh" : "Daily Kite login required");
     document.getElementById("connection-status").classList.toggle("connected", connected);
@@ -44,7 +49,12 @@ async function refreshDashboard() {
     setText("notice", dashboardState.demo ? "DEMO PREVIEW. No account calls, real trades or working controls." : halted ? "Attention required. Inspect Kite orders and positions before continuing." : dashboardState.paused ? "New trades are paused. Existing stops and exits keep running." : "₹10,000 starting allocation. Only completed net profits or losses change it.");
     setText("trading-status", dashboardState.paused ? "New trades paused" : "New trades control");
     setText("control-detail", `Runner: ${dashboardState.runner.status.toLowerCase().replaceAll("_"," ")}. Pausing does not sell an open position.`);
-    const pauseButton = document.getElementById("pause"); pauseButton.disabled = dashboardState.paused || dashboardState.demo; pauseButton.textContent = dashboardState.paused ? "New trades paused" : "Stop new trades";
+    newTradesPaused = dashboardState.paused;
+    const entryControlButton = document.getElementById("entry-control");
+    entryControlButton.disabled = entryControlPending || dashboardState.demo || (newTradesPaused && Boolean(dashboardState.resume_block_reason));
+    entryControlButton.textContent = newTradesPaused ? "Resume new trades" : "Stop new trades";
+    entryControlButton.classList.toggle("stop", !newTradesPaused);
+    if (newTradesPaused && dashboardState.resume_block_reason) setText("control-detail",dashboardState.resume_block_reason);
     setText("position-count",dashboardState.positions.length); setText("order-count",dashboardState.orders.length);
     showRows("positions",dashboardState.positions,connected ? "No broker-confirmed open positions." : "Positions unavailable until Kite verifies.",position=>({title:position.tradingsymbol,description:`${position.product} · ${position.quantity} units`,value:formatRupees(position.pnl),profit:position.pnl}));
     // A pending fill/protection state can exist before the broker position snapshot refreshes.
@@ -57,14 +67,25 @@ async function refreshDashboard() {
     showRows("completed",dashboardState.completed,"Completed live trades will appear here.",trade=>({title:trade.symbol,description:`${trade.closed_at ? new Date(trade.closed_at).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"}) : "Closed"} · charges ${formatRupees(trade.charges)}`,value:formatRupees(trade.net_pnl),profit:trade.net_pnl}));
     setText("refreshed",`Page refreshed ${new Date(dashboardState.generated_at).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})} IST · broker checked ${dashboardState.connection.verified_at ? new Date(dashboardState.connection.verified_at).toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})+" IST" : "not yet"}.`);
   } catch (error) { setText("notice","Dashboard connection lost. Displayed facts may be old; check Kite directly."); }
-  window.setTimeout(refreshDashboard,5000);
+  finally { window.setTimeout(refreshDashboard,5000); }
 }
-document.getElementById("pause").addEventListener("click", async () => {
-  const button = document.getElementById("pause"); button.disabled = true;
+document.getElementById("entry-control").addEventListener("click", async () => {
+  const button = document.getElementById("entry-control"); button.disabled = true;
+  entryControlPending = true;
+  entryControlRevision += 1;
+  const requestedPause = !newTradesPaused;
   try {
-    const response = await fetch("/pause", {method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({csrf:csrfToken})});
-    if (!response.ok) throw new Error("Pause not confirmed");
-    setText("notice","New trades paused. Existing stops and exits keep running."); button.textContent="New trades paused";
-  } catch (error) { setText("notice","Pause could not be confirmed. Try again or stop new trades on the server."); button.disabled=false; }
+    const response = await fetch(requestedPause ? "/pause" : "/resume", {method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({csrf:csrfToken})});
+    if (!response.ok) {
+      setText("notice",response.status === 409 ? "Resume blocked. Resolve the stop request or execution halt first." : "Control change could not be confirmed. Try again.");
+      return;
+    }
+    newTradesPaused = (await response.json()).paused;
+    setText("trading-status",newTradesPaused ? "New trades paused" : "New trades control");
+    setText("notice",newTradesPaused ? "New trades paused. Existing stops and exits keep running." : "Entry pause removed. This does not start the runner; all trading checks still apply.");
+    button.textContent=newTradesPaused ? "Resume new trades" : "Stop new trades";
+    button.classList.toggle("stop",!newTradesPaused);
+  } catch (error) { setText("notice","Control change could not be confirmed. Refresh to check its state."); }
+  finally { entryControlRevision += 1; entryControlPending = false; button.disabled = false; }
 });
 refreshDashboard();

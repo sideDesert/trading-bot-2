@@ -81,14 +81,20 @@ class LiveRunner:
             try:
                 payload = json.loads(path.read_text())
                 if not self.engine.store.get(payload['decision_id']):
+                    pause_marker = self.engine.store.metadata('entry_pause')
+                    if payload.get('entry_pause_revision') is not None:
+                        if payload['entry_pause_revision'] != self.engine.store.entry_pause_revision():
+                            raise LiveHalt('Decision predates the latest pause')
+                    elif pause_marker and datetime.fromisoformat(payload['decided_at']) <= datetime.fromisoformat(pause_marker['paused_at']):
+                        raise LiveHalt('Decision predates the latest pause')
                     validate_contract(payload, self.upstox.option_contracts(expiry_date=payload['expiry_date']))
                     def quote_check():
-                        if (self.root/'PAUSE').exists() or (self.root/'STOP').exists():
-                            raise LiveHalt('New trades paused')
+                        if (self.root/'PAUSE').exists() or (self.root/'STOP').exists() or self.engine.store.metadata('entry_pause') != pause_marker:
+                            raise LiveHalt('New trades paused or decision superseded')
                         raw = self.upstox.market_quotes([payload['instrument_key']])
                         book = fresh_book(raw, payload['instrument_key'], self.clock())
-                        if (self.root/'PAUSE').exists() or (self.root/'STOP').exists():
-                            raise LiveHalt('New trades paused')
+                        if (self.root/'PAUSE').exists() or (self.root/'STOP').exists() or self.engine.store.metadata('entry_pause') != pause_marker:
+                            raise LiveHalt('New trades paused or decision superseded')
                         if not book or (book[1]-book[0])/((book[1]+book[0])/2) > .02:
                             raise LiveHalt('Selected option quote stale/missing or spread >2%')
                     self.engine.accept(payload, self.clock(), clock=self.clock, before_submit=quote_check)

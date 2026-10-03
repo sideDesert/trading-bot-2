@@ -62,6 +62,120 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.request('POST','/pause',{'csrf':csrf})[0],200)
         self.assertTrue((self.root/'PAUSE').exists())
         self.assertFalse((self.root/'STOP').exists())
+    def test_pause_resume_is_authenticated_idempotent_and_does_not_call_broker(self):
+        self.assertEqual(self.request('POST','/resume')[0],303)
+        csrf=self.login()
+        self.request('POST','/pause',{'csrf':csrf})
+        self.assertEqual(self.request('POST','/resume',{})[0],403)
+        self.assertTrue((self.root/'PAUSE').exists())
+        self.assertEqual(self.request('POST','/resume',{'csrf':csrf},dict(self.headers,Origin='null'))[0],403)
+        for _ in range(2):
+            self.assertEqual(self.request('POST','/resume',{'csrf':csrf})[0],200)
+        self.assertFalse((self.root/'PAUSE').exists())
+        self.assertFalse(self.app.snapshot()['paused'])
+        self.assertEqual(self.broker.calls,[])
+        self.assertEqual(self.app.snapshot()['runner']['status'],'NOT_RUNNING')
+
+    def test_pause_resume_invalidates_pending_agent_work_and_old_inbox(self):
+        from trading_bot.autopilot import agent_work_is_current
+        from trading_bot.live import LiveRunner
+        from trading_bot.live_engine import LiveConfig, LiveEngine
+        from test_live import decision
+        csrf=self.login()
+        captured_revision=self.app.store.entry_pause_revision()
+        inbox=self.root/'inbox'
+        inbox.mkdir()
+        payload=decision()
+        payload['entry_pause_revision']=captured_revision
+        queued=inbox/'old.json'
+        queued.write_text(json.dumps(payload))
+        self.clock += timedelta(seconds=1)
+        self.request('POST','/pause',{'csrf':csrf})
+        self.clock += timedelta(seconds=1)
+        self.request('POST','/resume',{'csrf':csrf})
+        self.assertFalse(agent_work_is_current(self.app.store,captured_revision))
+        self.assertTrue(agent_work_is_current(self.app.store,self.app.store.entry_pause_revision()))
+        engine=LiveEngine(self.app.store,self.broker,LiveConfig('AB1234',1000,10000,2000,1,200))
+        runner=LiveRunner(engine,object(),self.root,log=lambda _:None,clock=lambda:self.clock)
+        runner.ingest(self.clock)
+        self.assertFalse(queued.exists())
+        self.assertTrue((inbox/'processed'/'old.json').exists())
+        self.assertEqual(self.broker.calls,[])
+        self.assertEqual(self.app.store.all(),[])
+        # Legacy/manual queued decisions are checked by their decision time.
+        payload.pop('entry_pause_revision')
+        (inbox/'legacy.json').write_text(json.dumps(payload))
+        runner.ingest(self.clock)
+        self.assertTrue((inbox/'processed'/'legacy.json').exists())
+        self.assertEqual(self.broker.calls,[])
+
+    def test_concurrent_pause_resume_are_serialized(self):
+        csrf=self.login()
+        pause_writing=threading.Event()
+        release_pause=threading.Event()
+        resume_attempt=threading.Event()
+        blocked=[]
+        replies={}
+        writes=[]
+        class ObservedLock:
+            def __init__(self): self.lock=threading.RLock()
+            def __enter__(self):
+                acquired=self.lock.acquire(blocking=False)
+                if threading.current_thread().name=='resume-request':
+                    blocked.append(not acquired)
+                    resume_attempt.set()
+                if not acquired: self.lock.acquire()
+            def __exit__(self,*args): self.lock.release()
+        self.app.lock=ObservedLock()
+        original=self.app.store.set_metadata
+        def metadata(key,value):
+            if key=='entry_pause':
+                if threading.current_thread().name=='pause-request':
+                    pause_writing.set()
+                    if not release_pause.wait(2): raise RuntimeError('test timed out')
+                writes.append(threading.current_thread().name)
+            return original(key,value)
+        self.app.store.set_metadata=metadata
+        def control(action):
+            replies[action]=self.request('POST','/'+action,{'csrf':csrf})[0]
+        pause=threading.Thread(name='pause-request',target=control,args=('pause',))
+        resume=threading.Thread(name='resume-request',target=control,args=('resume',))
+        pause.start()
+        try:
+            self.assertTrue(pause_writing.wait(2))
+            resume.start()
+            self.assertTrue(resume_attempt.wait(2))
+            self.assertTrue(blocked[0])
+        finally:
+            release_pause.set()
+            pause.join(2)
+            if resume.ident: resume.join(2)
+        self.assertEqual(replies,{'pause':200,'resume':200})
+        self.assertEqual(writes,['pause-request','resume-request'])
+        self.assertFalse((self.root/'PAUSE').exists())
+
+    def test_resume_cannot_clear_stop_or_trade_halt(self):
+        csrf=self.login()
+        self.request('POST','/pause',{'csrf':csrf})
+        (self.root/'STOP').touch()
+        self.assertEqual(self.request('POST','/resume',{'csrf':csrf})[0],409)
+        self.assertTrue((self.root/'PAUSE').exists())
+        self.assertTrue((self.root/'STOP').exists())
+        (self.root/'STOP').unlink()
+        from trading_bot.live_engine import LiveConfig, LiveEngine
+        from test_live import decision
+        engine=LiveEngine(self.app.store,self.broker,LiveConfig('AB1234',1000,10000,2000,1,200))
+        engine.accept(decision(),NOW)
+        trade=self.app.store.all()[0]
+        trade['halted']=True
+        self.app.store.save(trade)
+        calls=list(self.broker.calls)
+        self.assertEqual(self.request('POST','/resume',{'csrf':csrf})[0],409)
+        self.assertTrue((self.root/'PAUSE').exists())
+        self.assertTrue(self.app.store.all()[0]['halted'])
+        self.assertEqual(self.broker.calls,calls)
+        self.assertTrue(self.app.snapshot()['resume_block_reason'])
+
     def start_kite(self):
         csrf = self.login()
         status, headers, body = self.request('POST','/kite/login',{'csrf':csrf})

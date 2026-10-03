@@ -129,10 +129,20 @@ class DashboardApp:
             self.schedule_refresh()
             return self._reply(200,json.dumps(self.snapshot(),allow_nan=False),content_type='application/json')
         if target.path=='/pause' and method=='POST':
-            self.root.mkdir(parents=True,exist_ok=True)
-            descriptor=os.open(self.root/'PAUSE',os.O_CREAT|os.O_WRONLY,0o600)
-            os.close(descriptor)
-            return self._reply(200,json.dumps({'paused':True}),content_type='application/json')
+            with self.lock:
+                self.root.mkdir(parents=True,exist_ok=True)
+                descriptor=os.open(self.root/'PAUSE',os.O_CREAT|os.O_WRONLY,0o600)
+                os.close(descriptor)
+                self.store.set_metadata('entry_pause',dict(paused_at=self.clock().isoformat(),revision=secrets.token_hex(16)))
+                return self._reply(200,json.dumps({'paused':True}),content_type='application/json')
+        if target.path=='/resume' and method=='POST':
+            with self.lock:
+                if (self.root/'STOP').exists() or any(trade.get('halted') for trade in self.store.all()):
+                    return self._reply(409,json.dumps({'error':'Resolve the stop request or execution halt before resuming.'}),content_type='application/json')
+                if (self.root/'PAUSE').exists():
+                    self.store.set_metadata('entry_pause',dict(paused_at=self.clock().isoformat(),revision=secrets.token_hex(16)))
+                    (self.root/'PAUSE').unlink(missing_ok=True)
+                return self._reply(200,json.dumps({'paused':False}),content_type='application/json')
         if target.path=='/logout' and method=='POST':
             with self.lock: self.sessions.pop(session_id,None)
             return self._reply(303,headers={'Location':'/login','Set-Cookie':self._cookie('',True)})
@@ -221,12 +231,13 @@ class DashboardApp:
         completed=[dict(decision_id=t['decision_id'],symbol=t['symbol'],closed_at=t.get('closed_at'),gross_pnl=t.get('gross_pnl'),charges=t.get('charges'),net_pnl=t.get('net_pnl')) for t in trades if t['status']=='CLOSED']
         open_trades=[dict(symbol=t['symbol'],status=t['status'],bought=t.get('entry',{}).get('filled',0),sold=sum(s.get('filled',0) for s in t['sells']),halted=t.get('halted',False),stop=t['stop'],target=t['target']) for t in trades if t['status'] not in ('CLOSED','CANCELLED','REJECTED')]
         daily=None if any(t.get('net_pnl') is None for t in completed) else sum(t['net_pnl'] for t in completed if (t.get('closed_at') or '')[:10]==self.clock().date().isoformat())
+        resume_block_reason='Stop request is active.' if (self.root/'STOP').exists() else 'Execution attention must be resolved.' if any(trade.get('halted') for trade in trades) else None
         heartbeat=self.store.metadata('runner_heartbeat') or {'status':'NOT_RUNNING'}
         try:
             if (self.clock()-datetime.fromisoformat(heartbeat['checked_at'])).total_seconds()>30:
                 heartbeat['status']='NOT_RUNNING'
         except (KeyError,ValueError): heartbeat['status']='NOT_RUNNING'
-        return dict(demo=False,connection=connection,capital=capital,daily_pnl=daily,paused=(self.root/'PAUSE').exists(),runner=heartbeat,
+        return dict(demo=False,connection=connection,capital=capital,daily_pnl=daily,paused=(self.root/'PAUSE').exists(),resume_block_reason=resume_block_reason,runner=heartbeat,
             open_trades=open_trades,completed=completed[-50:][::-1],positions=broker.get('positions',[]),orders=broker.get('orders',[]),
             login_ready=bool(self.account_id and self.api_key and self.api_secret),generated_at=self.clock().isoformat())
 

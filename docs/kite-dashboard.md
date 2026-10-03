@@ -94,8 +94,14 @@ budget does not bypass those checks.
 
 **Stop new trades** writes `data/live/PAUSE`. It prevents fresh model cycles and
 entry submission. Existing broker-held stops and runner-managed exits continue.
-It does not liquidate positions. There is deliberately no browser resume or start
-button; an operator must inspect state and remove `PAUSE` on the server to resume.
+It does not liquidate positions. The button changes to **Resume new trades**;
+resuming removes only `PAUSE`. It does not start the runner, clear `STOP`, clear
+an execution halt, bypass entry checks or place an order. Resume is refused while
+a stop request or any persisted execution halt exists. Both controls require
+the authenticated dashboard session, exact Origin and CSRF token. Each control
+transition invalidates older unfinished agent calls and queued entries. A quick
+pause/resume cannot reuse a pre-pause decision. Late page polls cannot overwrite
+an acknowledged control change.
 The existing `STOP` control is different: it requests safe exits and stops entries.
 
 Runner heartbeat older than 30 seconds is shown as not running. Broker rows may
@@ -103,3 +109,20 @@ remain visible after connection failure; their refresh timestamp and stale/login
 status identify them as historical. Always resolve execution attention in Kite
 and the durable journal before resuming. Stop limits can remain unfilled after a
 gap; completing login or pausing entries does not guarantee protection.
+
+## Future server schedule
+
+No server schedule is installed yet. After a host/provider is authorized, run one
+supervised controller, start around 09:00 IST on weekdays, and retain the existing
+holiday/special-session checks. A service manager should restart a crashed runner
+and alert the operator; a persistent terminal can expose its logs and controls.
+Use a timer/cron only for startup, never an unconditional 15:20 process kill.
+The controller targets exits at 15:20 on ordinary sessions and should continue
+reconciling until bot positions and working bot orders are confirmed resolved.
+It must report an outstanding exit rather than assume a scheduled stop flattened
+the account. Daily login and configured pilot/risk limits remain activation gates.
+
+The conversational agent is still ephemeral in the current implementation. Saved
+conversation/resume and interactive SSH takeover require a separate controller
+change with exclusive ownership of that conversation; they are not enabled by
+the dashboard Resume button. This feature resumes entry permission only.

@@ -213,6 +213,8 @@ def queue_paper_order(inbox: Path, store, row: AgentDecisionRow, proposed_lots=N
         "india_vix": market.get("india_vix"),
         "context_ts": row.context_ts.isoformat() if row.context_ts else None,
     }
+    if "entry_pause_revision" in market:
+        payload["entry_pause_revision"] = market["entry_pause_revision"]
     if proposed_lots is not None:
         payload["proposed_lots"] = proposed_lots
     inbox.mkdir(parents=True, exist_ok=True)

@@ -140,7 +140,11 @@ def collect_decision(db_path, upstox, agent, limits):
     return proposal, brief
 
 
-def record_proposal(proposal, brief, now, db_path, inbox, mode):
+def agent_work_is_current(store, revision):
+    return store.entry_pause_revision() == revision
+
+
+def record_proposal(proposal, brief, now, db_path, inbox, mode, *, entry_pause_revision=None):
     validate_proposal(proposal, brief, now)
     args = SimpleNamespace(**proposal, execution_mode=mode, sources=None,
         context_ts=brief['meta']['ts_ist'], confidence=None, setup_quality=None,
@@ -148,6 +152,7 @@ def record_proposal(proposal, brief, now, db_path, inbox, mode):
     with DuckDBStore(db_path) as store:
         context = dict(lot_size=brief['options'].get('lot_size'),
                        expiry_date=brief['meta'].get('expiry_date'), india_vix=brief['meta'].get('india_vix'))
+        if entry_pause_revision is not None: context['entry_pause_revision']=entry_pause_revision
         return do_record(store, args, now, inbox=inbox, market_context=context,
                          analytics_snapshot=json.dumps(brief, default=str, allow_nan=False))
 
@@ -200,6 +205,7 @@ def main(argv=None):
                 runner = PaperEngine(store, upstox, inbox)
             print(args.mode.upper()+' AUTOPILOT: agent decisions scheduled; no per-trade approval', flush=True)
             future, last_started = None, float('-inf')
+            future_pause_revision = None
             while True:
                 now = datetime.now(IST)
                 kill = (root/'STOP').exists() or not start <= now.date() <= end
@@ -218,8 +224,9 @@ def main(argv=None):
                 if future and future.done():
                     try:
                         proposal, brief = future.result()
-                        if not busy and decision_due(now, start, end, busy=False):
-                            receipt = record_proposal(proposal, brief, now, args.db_path, inbox, args.mode)
+                        current_work = args.mode != 'live' or agent_work_is_current(store,future_pause_revision)
+                        if not busy and current_work and decision_due(now, start, end, busy=False):
+                            receipt = record_proposal(proposal, brief, now, args.db_path, inbox, args.mode,entry_pause_revision=future_pause_revision)
                             print('Agent decision recorded: '+receipt['action'], flush=True)
                             if args.mode == 'live': runner.ingest(datetime.now(IST))
                     except Exception as error:
@@ -229,6 +236,10 @@ def main(argv=None):
                     current_limits = dict(limits)
                     if args.mode == 'live':
                         current_limits['capital'] = runner.engine.capital_status()
+                    if args.mode == 'live' and ((root/'PAUSE').exists() or (root/'STOP').exists()):
+                        time_module.sleep(1)
+                        continue
+                    future_pause_revision = store.entry_pause_revision() if args.mode == 'live' else None
                     future = pool.submit(collect_decision, args.db_path, upstox, agent, current_limits)
                     last_started = time_module.monotonic()
                 time_module.sleep(1 if args.mode == 'live' else 5)
