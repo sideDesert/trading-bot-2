@@ -20,7 +20,16 @@ or arm the live runner. No service or cloud provider is deployed by this feature
 Open `http://127.0.0.1:8080`. Preview data is illustrative, controls are disabled,
 and no account or model calls occur. The preview does not create a live journal.
 
-## Private service configuration
+## Local live pilot
+
+Follow [the complete local startup guide](terminal-pilot.md). Start the real
+dashboard with `--local --config config/live.json --port 8080`, open
+`http://127.0.0.1:8080/`, and complete daily Kite login from **Connect Kite**.
+Local mode supports the registered HTTP root callback and requires no
+`DASHBOARD_PUBLIC_URL`. It opens before yesterday's token is refreshed.
+The HTTPS configuration below applies to hosted service mode.
+
+## Hosted private service configuration
 
 Use the same persistent `--root` as the live runner (default `data/live`) and a
 private server configuration copied from `config/live.example.json`. Set the actual
@@ -122,7 +131,8 @@ reconciling until bot positions and working bot orders are confirmed resolved.
 It must report an outstanding exit rather than assume a scheduled stop flattened
 the account. Daily login and configured pilot/risk limits remain activation gates.
 
-The conversational agent is still ephemeral in the current implementation. Saved
-conversation/resume and interactive SSH takeover require a separate controller
-change with exclusive ownership of that conversation; they are not enabled by
-the dashboard Resume button. This feature resumes entry permission only.
+The default `exec` agent remains ephemeral. For a persistent interactive Codex
+conversation, use `autopilot --decision-source terminal` and the repository skill
+described in `terminal-pilot.md`. The Python runner retains execution ownership;
+closing Codex skips decisions but does not stop exits. Dashboard Resume changes
+entry permission only; it does not resume a Codex goal or start either process.

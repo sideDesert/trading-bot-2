@@ -111,3 +111,46 @@ class AutomationTests(unittest.TestCase):
     def test_example_cannot_activate_without_loss_limits(self):
         with self.assertRaises((LiveHalt, ValueError, TypeError)):
             read_settings(Path('config/live.example.json'))
+
+    def run_terminal_controller(self, resume=False, failed_cash=False):
+        from trading_bot.autopilot import main
+        from trading_bot.live_engine import LiveConfig
+        from test_live import Broker
+        ticks=[]
+        broker=Broker()
+        if failed_cash:
+            broker.cash_available=lambda: (_ for _ in ()).throw(RuntimeError('read unavailable'))
+        class Runner:
+            def __init__(self,engine,quotes,root): self.engine,self.root=engine,root
+            def tick(self,now,kill=False):
+                ticks.append((self.root/'PAUSE').exists())
+                if resume: (self.root/'PAUSE').unlink(missing_ok=True)
+            def ingest(self,now): pass
+        def sleep(seconds):
+            if len(ticks)>=2: raise KeyboardInterrupt
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)/'live'
+            config=LiveConfig('AB1234',10000,10000,10000,1,200)
+            with patch('trading_bot.autopilot.LIVE_ROOT',root), \
+                 patch('trading_bot.autopilot.read_settings',return_value=(config,NOW.date(),NOW.date(),600,60)), \
+                 patch('trading_bot.autopilot.load_env_file'), \
+                 patch('trading_bot.autopilot.execution_token',return_value='mock-token'), \
+                 patch('trading_bot.autopilot.KiteExecutionClient',return_value=broker), \
+                 patch('trading_bot.autopilot.UpstoxClient.from_env',return_value=object()), \
+                 patch('trading_bot.autopilot.LiveRunner',Runner), \
+                 patch('trading_bot.autopilot.datetime') as clock, \
+                 patch('trading_bot.autopilot.time_module.sleep',side_effect=sleep):
+                clock.now.return_value=NOW
+                result=main(['--mode','live','--enable-live','--config','unused.json','--decision-source','terminal'])
+            self.assertEqual(broker.book,[])
+        return result,ticks
+
+    def test_terminal_controller_starts_paused(self):
+        result,ticks=self.run_terminal_controller()
+        self.assertEqual(result,130)
+        self.assertEqual(ticks,[True,True])
+
+    def test_capital_read_failure_does_not_stop_exit_polling(self):
+        result,ticks=self.run_terminal_controller(resume=True,failed_cash=True)
+        self.assertEqual(result,130)
+        self.assertGreaterEqual(len(ticks),2)

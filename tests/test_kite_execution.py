@@ -7,6 +7,18 @@ from trading_bot.kite.client import KiteError, KiteForbiddenEndpoint, KiteHTTPEr
 
 
 class ExecutionClientTests(unittest.TestCase):
+    def test_monitor_separates_live_cash_from_safe_buying_cash(self):
+        from trading_bot.kite.execution import KiteMonitorClient
+        calls=[]
+        def transport(method,url,headers,body,timeout):
+            calls.append((method,url))
+            return json.dumps(dict(status='success',data=dict(net=8000,
+                available=dict(cash=15000,live_balance=12000)))).encode()
+        snapshot=KiteMonitorClient('key','token',transport=transport).cash_snapshot()
+        self.assertEqual(snapshot,dict(account_cash_inr=12000,usable_cash_inr=8000))
+        self.assertEqual(len(calls),1)
+        self.assertEqual(calls[0][0],'GET')
+
     def test_requires_explicit_activation(self):
         with self.assertRaises(KiteError):
             KiteExecutionClient('k', 't')

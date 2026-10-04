@@ -1,12 +1,12 @@
 # CONTEXT.md — trading-bot
 
-The original advisory and paper paths remain shadow-only. An explicitly armed agent-driven Kite autopilot was added on 03-Oct-2026; see `docs/kite-live.md`. No live pilot has been activated.
+The original advisory and paper paths remain shadow-only. An explicitly armed agent-driven Kite autopilot was added on 03-Oct-2026; see `docs/kite-live.md`. No live pilot has been activated. The approved 5-Oct local pilot uses the agent-owned `nifty-agent-advice` skill in Codex, Upstox data and Kite execution, with ₹10,000 starting capital, per-trade risk and daily-loss limits. See README.md and docs/terminal-pilot.md.
 
 Original NIFTY options intraday advisory bot: deterministic Python computes market features, levels, costs, sizing, and safety gates; an LLM may only validate a supplied candidate or choose `NO_TRADE`; every model decision is shadow-only; a human remains the only possible executor. Research in `research/` is the evidence baseline, but explicit decisions here and in `DATABASE.md` supersede conflicting synthesis implementation details.
 
-## Operating mode and approved pilot decisions
+## Legacy deterministic advisory and paper decisions
 
-- The pilot is forward-only shadow mode. It never places orders and every terminal advice is labelled `SHADOW ONLY - DO NOT EXECUTE`.
+- The legacy advisory pilot is forward-only shadow mode. It never places orders and every terminal advice is labelled `SHADOW ONLY - DO NOT EXECUTE`.
 - The sole signal family is a filtered 15-minute opening-range breakout: range labels 09:15–09:29 IST, breakout evaluation from 09:30, but the conservative entry-time gate blocks all new candidates before 09:45.
 - Fixed risk settings: maximum hypothetical loss ₹2,500/trade and daily actual-user-loss cutoff ₹5,000. India VIX >16 halves the hypothetical risk budget. Position size is always engine-owned.
 - VWAP source is decided: nearest NIFTY futures OHLCV. The implementation is explicitly a one-minute typical-price/volume proxy, not tick VWAP; raw futures fields are stored for audit but omitted from the model snapshot.
@@ -58,7 +58,7 @@ Original NIFTY options intraday advisory bot: deterministic Python computes mark
 ### Durable verdict
 
 - Two independent broad searches plus the repository audit found **no direct public head-to-head** between a frontier LLM and a deterministic algorithm for intraday NIFTY option buying. Do not claim that either approach has demonstrated positive expectancy for this exact task.
-- Deterministic Python remains the direction/candidate, arithmetic, levels, costs, sizing, timing, and risk authority. The live agent remains an accept-or-`NO_TRADE` filter. Do not allow the agent to reverse CALL↔PUT or create a second candidate without a separately approved experiment.
+- For the legacy deterministic advisory, Python remains the direction/candidate, arithmetic, levels, costs, sizing, timing, and risk authority. That advisory agent remains an accept-or-`NO_TRADE` filter. Do not allow the agent to reverse CALL↔PUT or create a second candidate without a separately approved experiment.
 - This verdict is about reliability and evidence, not profitability: the filtered ORB Python strategy is also unproven and must pass the same forward, cost-inclusive gates.
 - The current prompt is safe but intentionally narrow/generic. No public “NIFTY master prompt” has credible forward, cost-inclusive proof. `system_v1.txt` remains active; an ordered NIFTY-checklist v2 is research work, not an approved prompt change.
 
@@ -147,7 +147,7 @@ Original NIFTY options intraday advisory bot: deterministic Python computes mark
 ## Verification
 
 - Environment: `python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt`.
-- Full offline gate: `.venv/bin/python -m unittest discover -s tests -v` (**449 tests**), `.venv/bin/python -m compileall -q trading_bot tests`, and `node --test tests/test_dashboard_controls.cjs` (**2 tests**).
+- Full offline gate: `.venv/bin/python -m unittest discover -s tests -v` (**464 tests**), `.venv/bin/python -m compileall -q trading_bot tests`, and `node --test tests/test_dashboard_controls.cjs` (**2 tests**), verified 4-Oct-2026.
 - CLI help gates: modules `trading_bot.upstox`, `trading_bot.collector`, `trading_bot.agent_tool`, `trading_bot.advisory`, `trading_bot.feedback`, and `trading_bot.prompt_analysis`.
 - Devin discovers `/nifty-advice` from `.devin/skills/nifty-advice` and `/trade-result` from `.devin/skills/trade-result`.
 - Bounded live Upstox and harness validation passed on 17-Sep-2026: concrete expiry `2026-09-22`, dynamic lot 65, nine-row chain window, historical baselines, features, tick-valid candidate levels, DuckDB write, immediate 2,708-byte snapshot, and `agent_tool prepare` without any model API key. The after-hours request correctly returned engine-owned `NO_TRADE` with the shadow boundary.

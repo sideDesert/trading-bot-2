@@ -41,6 +41,8 @@ async function refreshDashboard() {
     document.getElementById("connection-status").classList.toggle("connected", connected);
     setText("connection-detail", connected ? "Verified by the broker. Daily login stays on Zerodha." : "Connect securely on Zerodha’s website.");
     document.getElementById("kite-login").disabled = !dashboardState.login_ready || dashboardState.demo;
+    setText("broker-cash", formatRupees(dashboardState.account_cash_inr));
+    setText("cash-detail", dashboardState.account_cash_inr == null ? "Zerodha cash is unverified. Connect Kite to refresh." : "Live cash balance reported by Zerodha. This is separate from the bot allocation.");
     setText("available", formatRupees(dashboardState.capital.available_for_new_trade_inr));
     setText("allocation", formatRupees(dashboardState.capital.allocation_inr));
     showProfit("total-pnl",dashboardState.capital.realized_net_pnl_inr); showProfit("daily-pnl",dashboardState.daily_pnl);

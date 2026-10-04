@@ -34,20 +34,26 @@ Paper rehearsal (does make Upstox/model requests, but cannot send broker orders)
 Paper sizing retains the existing paper engine rules. Proposed live lots do not
 change paper sizing or the separate advisory strategy.
 
+For decisions visible in one interactive Codex conversation, add
+`--decision-source terminal` and use the repository's `$nifty-agent-advice` skill.
+This replaces the nested noninteractive model invocation only; execution,
+freshness, pause invalidation and risk checks stay in the Python runner. See
+`terminal-pilot.md` for the three-terminal startup and goal instructions.
+
 ## Inputs required before activation
 
 Copy `config/live.example.json` to gitignored `config/live.json`. Fill in:
 
 - `account_id`: the exact Kite account ID.
-- `risk_per_trade_inr`: a separately chosen maximum planned trade loss; no paper default is copied.
-- `daily_loss_limit_inr`: a separately chosen daily net loss budget.
+- `risk_per_trade_inr`: a separately chosen maximum planned trade loss; no paper default is copied. The approved local pilot uses ₹10,000.
+- `daily_loss_limit_inr`: a separately chosen daily net loss budget. The approved local pilot uses ₹10,000.
 - `pilot_start` and `pilot_end`: explicit ISO dates, end within 14 days of start.
 - `max_lots`: independent lot ceiling (example is one). The agent may propose up to this ceiling.
 - Review `stop_limit_buffer`, `fee_reserve_inr` (minimum ₹200), cadence and model timeout.
 
 `capital_limit_inr: 10000` means **total starting allocation**, not per-trade risk.
 Missing/null settings refuse activation. The initial version also refuses planned
-risk above ₹2,500/trade or daily loss above ₹5,000. These are upper implementation
+risk above ₹10,000/trade or daily loss above ₹10,000. These are upper implementation
 ceilings, not approved operating limits. Risk includes the sell-limit buffer and the
 larger of the fee reserve and Kite's round-trip charge estimate; high/unknown VIX
 halves the risk budget. If even one current lot cannot fit, the trade is skipped.
@@ -84,17 +90,17 @@ Offline configuration check (no account requests):
 Activation commands below are documentation only. They have **not** been run:
 
 ```bash
-# Once each market morning: complete normal human Kite login.
-.venv/bin/python -m trading_bot.kite login
-# After configuration, authentication, hosting and explicit pilot activation:
-.venv/bin/python -m trading_bot.autopilot --mode live --enable-live --config config/live.json
+# After configuration, daily dashboard login, fixed IP and explicit pilot activation:
+.venv/bin/python -m trading_bot.autopilot --mode live --enable-live --config config/live.json --decision-source terminal
 ```
 
 The existing login helper writes `KITE_ACCESS_TOKEN` into `.env` with restricted
 permissions. Supply `UPSTOX_ACCESS_TOKEN`, `KITE_API_KEY`, `KITE_API_SECRET` for login,
 and the resulting `KITE_ACCESS_TOKEN` securely. Do not place secrets in the JSON
-config. Restart the service after refreshing credentials; it does not automate
-password/TOTP login. No credentials have been installed by this implementation.
+config. Dashboard login updates the shared token, which the runner reloads each tick.
+The CLI helper updates only `.env`; an expired shared token still blocks that
+fallback, so use dashboard login for this local pilot. Password/TOTP entry stays
+on Zerodha. Private credentials are local and never checked into Git.
 
 The standalone executor can also consume explicit `agent_brain record
 --execution-mode live --proposed-lots N` decisions in `data/live/inbox`; it is not

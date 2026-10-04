@@ -8,6 +8,6 @@
   "max_lots": 1,
   "pilot_start": null,
   "pilot_end": null,
-  "decision_interval_seconds": 120,
+  "decision_interval_seconds": 600,
   "model_timeout_seconds": 60
 }

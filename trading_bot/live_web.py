@@ -43,6 +43,7 @@ class DashboardApp:
             raise ValueError('Private dashboard password must contain at least 16 characters')
         self.root, self.public_url, self.host = Path(root), public_url.rstrip('/'), address.netloc
         self.secure_cookie = address.scheme=='https'
+        self.local_root_callback = allow_local_http and local and not demo
         self.account_id, self.api_key, self.api_secret = account_id, api_key, api_secret
         self.starting, self.fee_reserve, self.exchange = starting_capital, fee_reserve, exchange
         self.broker_factory, self.clock, self.demo = broker_factory, clock, demo
@@ -94,6 +95,8 @@ class DashboardApp:
         if headers.get('Host')!=self.host: return self._reply(400,'Invalid host')
         target=urlsplit(path)
         if target.scheme or target.netloc or len(body)>4096: return self._reply(400,'Invalid request')
+        if self.local_root_callback and method=='GET' and target.path=='/' and 'request_token' in parse_qs(target.query):
+            target=urlsplit('/kite/callback?'+target.query)
         if method not in ('GET','POST'): return self._reply(405,'Method not allowed')
         if method=='POST' and headers.get('Origin')!=self.public_url: return self._reply(403,'Invalid origin')
         if target.path in ('/static/dashboard.css','/static/dashboard.js') and method=='GET':
@@ -191,15 +194,17 @@ class DashboardApp:
             session=self.tokens.load(checked_at,self.account_id)
             broker=self.broker_factory(self.api_key,session['access_token'])
             if broker.profile().get('user_id')!=self.account_id: raise LiveHalt('Account mismatch')
-            cash=float(broker.cash_available())
-            if not math.isfinite(cash): raise LiveHalt('Cash unavailable')
+            funds=broker.cash_snapshot()
+            cash=float(funds['usable_cash_inr'])
+            account_cash=float(funds['account_cash_inr'])
+            if not math.isfinite(cash) or not math.isfinite(account_cash): raise LiveHalt('Cash unavailable')
             fields=('order_id','tradingsymbol','exchange','transaction_type','quantity','filled_quantity','pending_quantity','status','order_type','price','trigger_price')
             orders=[{key:order.get(key) for key in fields} for order in broker.orders() if order.get('exchange')=='NFO' and order.get('status') not in ('COMPLETE','CANCELLED','REJECTED')]
             positions=[{key:position.get(key) for key in ('tradingsymbol','exchange','product','quantity','average_price','last_price','pnl')} for position in broker.positions() if position.get('exchange')=='NFO' and position.get('quantity')]
             with self.lock:
                 current=self.tokens.load(self.clock(),self.account_id)
                 if current.get('generation')!=session.get('generation'): return
-                self.store.set_metadata('dashboard_broker',dict(status='CONNECTED',verified_at=checked_at.isoformat(),generation=session.get('generation'),cash=cash,positions=positions,orders=orders))
+                self.store.set_metadata('dashboard_broker',dict(status='CONNECTED',verified_at=checked_at.isoformat(),generation=session.get('generation'),cash=cash,account_cash=account_cash,positions=positions,orders=orders))
         except Exception:
             with self.lock:
                 try:
@@ -207,12 +212,12 @@ class DashboardApp:
                     if session is None or current.get('generation')!=session.get('generation'): return
                 except LiveHalt: pass
                 previous=self.store.metadata('dashboard_broker') or {}
-                previous.update(status='LOGIN_REQUIRED',cash=None)
+                previous.update(status='LOGIN_REQUIRED',cash=None,account_cash=None)
                 self.store.set_metadata('dashboard_broker',previous)
 
     def snapshot(self):
         if self.demo:
-            return dict(demo=True,connection={'status':'DEMO','verified_at':None},capital={'allocation_inr':10000,'available_for_new_trade_inr':None,'realized_net_pnl_inr':0,'committed_inr':0,'broker_cash_inr':None},
+            return dict(demo=True,account_cash_inr=None,connection={'status':'DEMO','verified_at':None},capital={'allocation_inr':10000,'available_for_new_trade_inr':None,'realized_net_pnl_inr':0,'committed_inr':0,'broker_cash_inr':None},
                 daily_pnl=0,paused=False,runner={'status':'NOT_RUNNING'},open_trades=[],completed=[],positions=[],orders=[],login_ready=False,generated_at=self.clock().isoformat())
         trades=self.store.all()
         broker=self.store.metadata('dashboard_broker') or dict(status='LOGIN_REQUIRED',cash=None,positions=[],orders=[])
@@ -237,7 +242,7 @@ class DashboardApp:
             if (self.clock()-datetime.fromisoformat(heartbeat['checked_at'])).total_seconds()>30:
                 heartbeat['status']='NOT_RUNNING'
         except (KeyError,ValueError): heartbeat['status']='NOT_RUNNING'
-        return dict(demo=False,connection=connection,capital=capital,daily_pnl=daily,paused=(self.root/'PAUSE').exists(),resume_block_reason=resume_block_reason,runner=heartbeat,
+        return dict(demo=False,account_cash_inr=broker.get('account_cash') if fresh else None,connection=connection,capital=capital,daily_pnl=daily,paused=(self.root/'PAUSE').exists(),resume_block_reason=resume_block_reason,runner=heartbeat,
             open_trades=open_trades,completed=completed[-50:][::-1],positions=broker.get('positions',[]),orders=broker.get('orders',[]),
             login_ready=bool(self.account_id and self.api_key and self.api_secret),generated_at=self.clock().isoformat())
 
@@ -267,6 +272,7 @@ def main(argv=None):
     parser.add_argument('--host',default='127.0.0.1'); parser.add_argument('--port',type=int,default=8080)
     parser.add_argument('--root',type=Path,default=LIVE_ROOT); parser.add_argument('--config',type=Path,default=Path('config/live.json'))
     parser.add_argument('--env-file',type=Path,default=Path('.env')); parser.add_argument('--demo',action='store_true')
+    parser.add_argument('--local',action='store_true',help='Private loopback HTTP dashboard, including the registered root Kite callback')
     args=parser.parse_args(argv)
     try:
         if args.host not in ('127.0.0.1','localhost','::1'): raise ValueError('Bind to loopback behind an HTTPS reverse proxy')
@@ -275,9 +281,11 @@ def main(argv=None):
         else:
             load_env_file(args.env_file,names=('DASHBOARD_PASSWORD','DASHBOARD_PUBLIC_URL','KITE_API_KEY','KITE_API_SECRET'))
             configuration=json.loads(args.config.read_text())
-            app=DashboardApp(args.root,os.environ.get('DASHBOARD_PUBLIC_URL',''),os.environ.get('DASHBOARD_PASSWORD',''),
+            public_url=f'http://127.0.0.1:{args.port}' if args.local else os.environ.get('DASHBOARD_PUBLIC_URL','')
+            if args.local and args.host!='127.0.0.1': raise ValueError('Local pilot requires the exact 127.0.0.1 host')
+            app=DashboardApp(args.root,public_url,os.environ.get('DASHBOARD_PASSWORD',''),
                 account_id=configuration.get('account_id'),api_key=os.environ.get('KITE_API_KEY',''),api_secret=os.environ.get('KITE_API_SECRET',''),
-                starting_capital=configuration.get('capital_limit_inr',10000),fee_reserve=configuration.get('fee_reserve_inr',200))
+                starting_capital=configuration.get('capital_limit_inr',10000),fee_reserve=configuration.get('fee_reserve_inr',200),allow_local_http=args.local)
         print('Dashboard listening on loopback; '+('DEMO ONLY' if args.demo else 'private access requires sign-in'),flush=True)
         serve(app,args.host,args.port)
     except KeyboardInterrupt: return 130

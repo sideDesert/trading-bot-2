@@ -47,10 +47,10 @@ class LiveConfig:
             raise ValueError('Explicit Kite account ID required')
         values = (self.risk_per_trade_inr, self.capital_limit_inr, self.daily_loss_limit_inr,
                   self.stop_limit_buffer, self.fee_reserve_inr)
-        if any(not math.isfinite(v) or v <= 0 for v in values):
+        if any(type(v) not in (int,float) or not math.isfinite(v) or v <= 0 for v in values):
             raise ValueError('Explicit positive finite live limits required')
-        if self.risk_per_trade_inr > 2500 or self.daily_loss_limit_inr > 5000:
-            raise ValueError('Initial live version caps planned risk at 2500/trade and daily loss at 5000')
+        if self.risk_per_trade_inr > 10000 or self.daily_loss_limit_inr > 10000:
+            raise ValueError('Live limits cap planned risk and daily loss at 10000 each')
         if not grid(self.stop_limit_buffer):
             raise ValueError('Stop limit buffer must be on the 0.05 tick grid')
         if type(self.max_lots) is not int or not 1 <= self.max_lots <= 10:
@@ -175,13 +175,14 @@ class LiveEngine:
         stop_limit = floor_tick(stop-self.config.stop_limit_buffer)
         estimated_fees = positive(self.broker.round_trip_charges(instrument.tradingsymbol, quantity, entry, stop_limit))
         fees = max(self.config.fee_reserve_inr, estimated_fees)
-        if (entry-stop_limit)*quantity + fees > budget:
+        planned_loss = (entry-stop_limit)*quantity + fees
+        if planned_loss > budget:
             raise LiveHalt('One lot exceeds live risk budget including stop buffer and fees')
         day_trades = [t for t in self.store.all() if t['created_at'][:10] == now.date().isoformat() and t.get('entry', {}).get('filled')]
         if any(t.get('net_pnl') is None for t in day_trades):
             raise LiveHalt('Live daily P&L incomplete')
         daily = sum(t['net_pnl'] for t in day_trades)
-        if daily - budget <= -self.config.daily_loss_limit_inr:
+        if daily <= -self.config.daily_loss_limit_inr or planned_loss > self.config.daily_loss_limit_inr+daily:
             raise LiveHalt('Live daily loss budget exhausted')
         required = positive(self.broker.order_margin(instrument.tradingsymbol, quantity, entry))
         cash = positive(self.broker.cash_available())

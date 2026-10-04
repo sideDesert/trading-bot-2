@@ -26,6 +26,7 @@ class DashboardTests(unittest.TestCase):
             self.calls.append(request)
             return {'user_id':'AB1234', 'access_token':'server-secret-token'}
         self.broker = Broker()
+        self.broker.cash_snapshot=lambda: dict(account_cash_inr=self.broker.cash,usable_cash_inr=self.broker.cash)
         self.app = DashboardApp(self.root, 'https://dashboard.example', 'a-private-password-long',
             account_id='AB1234', api_key='key', api_secret='server-secret',
             exchange=exchange, broker_factory=lambda *args: self.broker, clock=lambda:self.clock)
@@ -198,6 +199,18 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn(b'server-secret-token',body)
         self.assertNotIn(b'request-secret',body)
         self.assertNotIn(b'server-secret',body)
+    def test_local_root_callback_retains_state_and_session_checks(self):
+        self.app=DashboardApp(self.root,'http://127.0.0.1:8080','a-private-password-long',
+            account_id='AB1234',api_key='key',api_secret='secret',exchange=self.app.exchange,
+            broker_factory=lambda *args:self.broker,clock=lambda:self.clock,allow_local_http=True)
+        self.headers={'Host':'127.0.0.1:8080','Origin':'http://127.0.0.1:8080'}
+        state=self.start_kite()
+        path='/?'+urlencode(dict(state=state,request_token='local-request',status='success'))
+        self.assertEqual(self.request('GET',path,headers={'Host':'127.0.0.1:8080'})[0],403)
+        self.assertEqual(self.request('GET',path)[0],303)
+        self.assertEqual(self.request('GET',path)[0],403)
+        self.assertEqual(self.calls,['local-request'])
+
     def test_expired_state_and_wrong_account_do_not_save_token(self):
         state = self.start_kite()
         self.clock += timedelta(minutes=11)
@@ -244,6 +257,16 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(state['completed'][0]['net_pnl'],1240)
         self.clock += timedelta(seconds=31)
         self.assertIsNone(self.app.snapshot()['capital']['available_for_new_trade_inr'])
+    def test_zerodha_account_cash_is_distinct_from_bot_cash_and_ages_out(self):
+        self.app.tokens.save('private-token','AB1234',NOW)
+        self.broker.cash_snapshot=lambda: dict(account_cash_inr=42000,usable_cash_inr=9000)
+        self.app.refresh_broker()
+        state=self.app.snapshot()
+        self.assertEqual(state['account_cash_inr'],42000)
+        self.assertEqual(state['capital']['broker_cash_inr'],9000)
+        self.assertEqual(state['capital']['allocation_inr'],10000)
+        self.clock+=timedelta(seconds=31)
+        self.assertIsNone(self.app.snapshot()['account_cash_inr'])
 
     def test_pause_blocks_existing_inbox_without_broker_calls(self):
         from trading_bot.live import LiveRunner
@@ -352,6 +375,21 @@ class DashboardTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_local_dashboard_can_start_before_daily_login(self):
+        from unittest.mock import patch
+        from trading_bot.live_web import main
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root/'config.json'
+            config.write_text(json.dumps(dict(account_id='AB1234',capital_limit_inr=10000,fee_reserve_inr=200)))
+            KiteSessionStore(root/'kite-session.json').save('expired-token','AB1234',NOW)
+            with patch.dict(os.environ,dict(DASHBOARD_PASSWORD='a-private-password-long',KITE_API_KEY='key',KITE_API_SECRET='secret')), \
+                 patch('trading_bot.live_web.load_env_file'), patch('trading_bot.live_web.serve') as serve:
+                self.assertIsNone(main(['--local','--root',str(root),'--config',str(config)]))
+                app=serve.call_args.args[0]
+                self.assertEqual(app.public_url,'http://127.0.0.1:8080')
+                self.assertEqual(app.handle('GET','/login',{'Host':'127.0.0.1:8080'})[0],200)
+
     def test_expiry_account_binding_and_env_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

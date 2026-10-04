@@ -166,6 +166,7 @@ def build_parser():
     parser.add_argument('--db-path', type=Path, default=Path('data/trading_bot.duckdb'))
     parser.add_argument('--codex-command', default='codex')
     parser.add_argument('--model', default=None)
+    parser.add_argument('--decision-source', choices=('exec', 'terminal'), default='exec')
     return parser
 
 
@@ -191,10 +192,17 @@ def main(argv=None):
             root = Path('data/paper-autopilot')
         load_env_file(args.env_file, names=('UPSTOX_ACCESS_TOKEN', 'KITE_API_KEY', 'KITE_ACCESS_TOKEN'))
         upstox = UpstoxClient.from_env()
-        agent = CodexDecisionAgent(args.codex_command, timeout, args.model)
+        if args.decision_source == 'terminal':
+            from .terminal_decisions import TerminalDecisionAgent
+            agent = TerminalDecisionAgent(root/'terminal', timeout)
+        else:
+            agent = CodexDecisionAgent(args.codex_command, timeout, args.model)
         lock_path = LIVE_ROOT/'runner.lock' if args.mode == 'live' else root/'runner.lock'
         with runner_lock(lock_path), ThreadPoolExecutor(max_workers=1) as pool:
             if args.mode == 'live':
+                if args.decision_source == 'terminal':
+                    descriptor=os.open(root/'PAUSE',os.O_CREAT|os.O_WRONLY,0o600)
+                    os.close(descriptor)
                 broker = KiteExecutionClient(os.environ.get('KITE_API_KEY', ''), execution_token(root,config.account_id,datetime.now(IST),fallback=os.environ.get('KITE_ACCESS_TOKEN','')), enabled=True)
                 store = LiveStore(root/'state.sqlite3')
                 runner = LiveRunner(LiveEngine(store, broker, config), upstox, root)
@@ -228,14 +236,32 @@ def main(argv=None):
                         if not busy and current_work and decision_due(now, start, end, busy=False):
                             receipt = record_proposal(proposal, brief, now, args.db_path, inbox, args.mode,entry_pause_revision=future_pause_revision)
                             print('Agent decision recorded: '+receipt['action'], flush=True)
+                            if args.decision_source == 'terminal':
+                                agent.finish('RECORDED', action=receipt['action'],
+                                    queued=bool(receipt.get(args.mode+'_order_queued')))
                             if args.mode == 'live': runner.ingest(datetime.now(IST))
+                        elif args.decision_source == 'terminal':
+                            agent.finish('DISCARDED', reason='Paused, busy, superseded, or entry session closed')
                     except Exception as error:
+                        if args.decision_source == 'terminal':
+                            agent.finish('FAILED', reason=type(error).__name__)
                         print('Agent cycle skipped: '+type(error).__name__, file=sys.stderr, flush=True)
                     future = None
                 if not future and decision_due(now, start, end, busy=busy) and time_module.monotonic()-last_started >= interval:
                     current_limits = dict(limits)
                     if args.mode == 'live':
-                        current_limits['capital'] = runner.engine.capital_status()
+                        try:
+                            current_limits['capital'] = runner.engine.capital_status()
+                            daily_trades=[trade for trade in store.all() if trade['created_at'][:10]==now.date().isoformat() and trade.get('entry',{}).get('filled')]
+                            if any(trade.get('net_pnl') is None for trade in daily_trades):
+                                raise LiveHalt('Live daily P&L incomplete')
+                            current_limits['daily_net_pnl_inr']=sum(trade['net_pnl'] for trade in daily_trades)
+                            current_limits['remaining_daily_loss_inr']=max(0,config.daily_loss_limit_inr+current_limits['daily_net_pnl_inr'])
+                        except Exception as error:
+                            print('Decision capital check unavailable: '+type(error).__name__+'; exits keep running',file=sys.stderr,flush=True)
+                            last_started=time_module.monotonic()
+                            time_module.sleep(1)
+                            continue
                     if args.mode == 'live' and ((root/'PAUSE').exists() or (root/'STOP').exists()):
                         time_module.sleep(1)
                         continue

@@ -85,6 +85,17 @@ class LiveTests(unittest.TestCase):
         params = self.broker.calls[0][1]
         self.assertEqual((params['quantity'], params['validity']), (65, 'IOC'))
         with self.assertRaises(ValueError): LiveConfig('AB1234', 10000, 10000, 20000, 1, 200)
+    def test_approved_daily_loss_limit_preserves_separate_trade_limit(self):
+        config=LiveConfig('AB1234',10000,10000,10000,1,200)
+        self.assertEqual(config.daily_loss_limit_inr,10000)
+        with self.assertRaises(ValueError): LiveConfig('AB1234',2500,10000,10001,1,200)
+        with self.assertRaises(ValueError): LiveConfig('AB1234',10001,10000,10000,1,200)
+        with self.assertRaisesRegex(ValueError,'Explicit positive finite'):
+            LiveConfig('AB1234',None,10000,10000,1,200)
+    def test_total_loss_trade_limit_does_not_reserve_unspent_risk(self):
+        self.engine=LiveEngine(self.engine.store,self.broker,LiveConfig('AB1234',10000,10000,10000,1,200))
+        self.engine.accept(decision(),NOW)
+        self.assertEqual(len(self.broker.book),1)
     def test_partial_entry_is_protected_then_remainder_cancelled(self):
         self.enter(30, 'OPEN')
         sells = [c for c in self.broker.calls if c[0]=='place' and c[1]['transaction_type']=='SELL']

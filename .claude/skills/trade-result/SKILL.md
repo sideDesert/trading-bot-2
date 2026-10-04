@@ -77,4 +77,4 @@ The user is reporting what they actually did with an earlier shadow advisory. Re
 
 - Record only what the user reports; never infer fills from market data.
 - Never modify, overwrite, or delete stored rows. One `USER` row and one `SHADOW_30M` row per advice is the whole storage contract here.
-- Never suggest that recording a result affects live trading; the entire system remains shadow-only.
+- Never suggest that recording a result affects live trading; the legacy feedback workflow remains shadow-only.

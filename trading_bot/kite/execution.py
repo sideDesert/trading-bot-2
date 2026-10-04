@@ -142,6 +142,15 @@ class KiteMonitorClient(KiteExecutionClient):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, enabled=True, **kwargs)
 
+    def cash_snapshot(self):
+        margins=self._json('GET','/user/margins/equity')
+        cash=float(margins['available']['cash'])
+        live_balance=float(margins['available']['live_balance'])
+        net=float(margins['net'])
+        if not all(math.isfinite(value) for value in (cash,live_balance,net)):
+            raise KiteError('Cash unavailable')
+        return dict(account_cash_inr=live_balance,usable_cash_inr=min(cash,live_balance,net))
+
     def _call(self, method, path, payload=None, timeout=15.0):
         if method != 'GET':
             raise KiteForbiddenEndpoint('Dashboard has no broker write access')
